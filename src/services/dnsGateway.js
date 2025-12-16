@@ -69,10 +69,11 @@ function cleanIPs(ips) {
  *
  * @param {string} appName - Application name (e.g., 'minecraft-abc123')
  * @param {string[]} serverIPs - Array of server IPs for this game
- * @param {string} zone - DNS zone (default: from config)
+ * @param {string} zone - DNS zone (required)
+ * @param {number} ttl - DNS record TTL in seconds (required)
  * @returns {Promise<object>} DNS Gateway response
  */
-async function createGameDNSRecords(appName, serverIPs, zone = null) {
+async function createGameDNSRecords(appName, serverIPs, zone, ttl) {
   if (!isReady()) {
     throw new Error('DNS Gateway client not initialized or disabled');
   }
@@ -81,18 +82,25 @@ async function createGameDNSRecords(appName, serverIPs, zone = null) {
     throw new Error('No server IPs provided for DNS records');
   }
 
-  const dnsZone = zone || config.dns.zone;
+  if (!zone) {
+    throw new Error('DNS zone is required');
+  }
+
+  if (!ttl) {
+    throw new Error('TTL is required');
+  }
+
   const cleanedIPs = cleanIPs(serverIPs);
 
   try {
-    const response = await dnsGatewayClient.post(`/api/v1/zones/${dnsZone}/records`, {
+    const response = await dnsGatewayClient.post(`/api/v1/zones/${zone}/records`, {
       name: appName,
       record_type: 'A',
       content: cleanedIPs,
-      ttl: config.dns.ttl,
+      ttl,
     });
 
-    log.info(`Created DNS records for ${appName}.${dnsZone} -> [${cleanedIPs.join(', ')}]`);
+    log.info(`Created DNS records for ${appName}.${zone} -> [${cleanedIPs.join(', ')}]`);
     return response.data;
   } catch (error) {
     log.error(`Failed to create DNS records for ${appName}: ${error.message}`);
@@ -107,22 +115,24 @@ async function createGameDNSRecords(appName, serverIPs, zone = null) {
  * Delete DNS A records for a game app
  *
  * @param {string} appName - Application name
- * @param {string} zone - DNS zone
+ * @param {string} zone - DNS zone (required)
  * @returns {Promise<void>}
  */
-async function deleteGameDNSRecords(appName, zone = null) {
+async function deleteGameDNSRecords(appName, zone) {
   if (!isReady()) {
     throw new Error('DNS Gateway client not initialized or disabled');
   }
 
-  const dnsZone = zone || config.dns.zone;
+  if (!zone) {
+    throw new Error('DNS zone is required');
+  }
 
   try {
-    await dnsGatewayClient.delete(`/api/v1/zones/${dnsZone}/records/${appName}/A`);
-    log.info(`Deleted DNS records for ${appName}.${dnsZone}`);
+    await dnsGatewayClient.delete(`/api/v1/zones/${zone}/records/${appName}/A`);
+    log.info(`Deleted DNS records for ${appName}.${zone}`);
   } catch (error) {
     if (error.response && error.response.status === 404) {
-      log.info(`DNS records for ${appName}.${dnsZone} not found (already deleted)`);
+      log.info(`DNS records for ${appName}.${zone} not found (already deleted)`);
       return;
     }
     log.error(`Failed to delete DNS records for ${appName}: ${error.message}`);
@@ -134,18 +144,20 @@ async function deleteGameDNSRecords(appName, zone = null) {
  * Get DNS A records for a game app
  *
  * @param {string} appName - Application name
- * @param {string} zone - DNS zone
+ * @param {string} zone - DNS zone (required)
  * @returns {Promise<object|null>} DNS record data or null if not found
  */
-async function getGameDNSRecords(appName, zone = null) {
+async function getGameDNSRecords(appName, zone) {
   if (!isReady()) {
     throw new Error('DNS Gateway client not initialized or disabled');
   }
 
-  const dnsZone = zone || config.dns.zone;
+  if (!zone) {
+    throw new Error('DNS zone is required');
+  }
 
   try {
-    const response = await dnsGatewayClient.get(`/api/v1/zones/${dnsZone}/records/${appName}/A`);
+    const response = await dnsGatewayClient.get(`/api/v1/zones/${zone}/records/${appName}/A`);
     return response.data;
   } catch (error) {
     if (error.response && error.response.status === 404) {

@@ -24,10 +24,14 @@ let pollingInterval = null;
  * Check if IPs for an app have changed since last DNS update
  * @param {string} appName - Application name
  * @param {string[]} currentIPs - Current IP addresses
+ * @param {string} zone - DNS zone
  * @returns {boolean} True if IPs have changed or no state entry exists
  */
-function hasIPsChanged(appName, currentIPs) {
-  const cachedState = appsDNSState.get(appName);
+function hasIPsChanged(appName, currentIPs, zone) {
+  const appState = appsDNSState.get(appName);
+  if (!appState) return true;
+
+  const cachedState = appState.get(zone);
   if (!cachedState) return true;
 
   // Compare IP arrays (order-independent)
@@ -47,16 +51,22 @@ function hasIPsChanged(appName, currentIPs) {
  * Update DNS state after successful DNS record operation
  * @param {string} appName - Application name
  * @param {string[]} ips - IP addresses that were set
+ * @param {string} zone - DNS zone
  */
-function updateDNSState(appName, ips) {
-  appsDNSState.set(appName, [...ips]);
+function updateDNSState(appName, ips, zone) {
+  let appState = appsDNSState.get(appName);
+  if (!appState) {
+    appState = new Map();
+    appsDNSState.set(appName, appState);
+  }
+  appState.set(zone, [...ips]);
 }
 
 /**
  * Process a single app - update DNS if needed
  * Gets the master IP from FDM (Flux Domain Manager) which knows the current HAProxy state
  * @param {Object} app - App specification
- * @returns {Promise<boolean>} True if DNS was updated
+ * @returns {Promise<number>} Number of zones successfully updated
  */
 async function processApp(app) {
   const appName = app.name;
@@ -66,29 +76,35 @@ async function processApp(app) {
 
   if (!masterIP) {
     log.debug(`No master IP available from FDM for ${appName}, skipping`);
-    return false;
+    return 0;
   }
 
   // Clean the master IP (remove any brackets for IPv6)
   const cleanMasterIP = masterIP.replace(/\[|\]/g, '');
 
-  // Check if DNS update is needed
-  if (!hasIPsChanged(appName, [cleanMasterIP])) {
-    log.debug(`No DNS change needed for ${appName}`);
-    return false;
+  // Process each configured zone
+  let updatedCount = 0;
+  for (const zone of config.dns.zones) {
+    // Check if DNS update is needed for this zone
+    if (!hasIPsChanged(appName, [cleanMasterIP], zone.name)) {
+      log.debug(`No DNS change needed for ${appName} in ${zone.name}`);
+      continue;
+    }
+
+    log.info(`Updating DNS for ${appName} in ${zone.name}: ${cleanMasterIP}`);
+
+    try {
+      await dnsGateway.createGameDNSRecords(appName, [cleanMasterIP], zone.name, zone.ttl);
+      updateDNSState(appName, [cleanMasterIP], zone.name);
+      log.info(`DNS updated for ${appName}.${zone.name} -> ${cleanMasterIP}`);
+      updatedCount += 1;
+    } catch (error) {
+      log.error(`Failed to update DNS for ${appName} in ${zone.name}: ${error.message}`);
+      // Continue processing other zones
+    }
   }
 
-  log.info(`Updating DNS for ${appName}: ${cleanMasterIP}`);
-
-  try {
-    await dnsGateway.createGameDNSRecords(appName, [cleanMasterIP]);
-    updateDNSState(appName, [cleanMasterIP]);
-    log.info(`DNS updated for ${appName} -> ${cleanMasterIP}`);
-    return true;
-  } catch (error) {
-    log.error(`Failed to update DNS for ${appName}: ${error.message}`);
-    return false;
-  }
+  return updatedCount;
 }
 
 /**
@@ -109,7 +125,7 @@ async function handleRemovedApps(currentSeenApps) {
     const cachedState = appsDNSState.get(appName);
 
     // Only process if we have DNS state for this app
-    if (!cachedState || cachedState.length === 0) {
+    if (!cachedState || cachedState.size === 0) {
       continue;
     }
 
@@ -127,16 +143,24 @@ async function handleRemovedApps(currentSeenApps) {
 
     if (elapsedMs >= gracePeriodMs) {
       const elapsedMinutes = Math.round(elapsedMs / 1000 / 60);
-      log.info(`App ${appName} missing for ${elapsedMinutes} minutes, deleting DNS records`);
+      log.info(`App ${appName} missing for ${elapsedMinutes} minutes, deleting DNS records from all zones`);
 
-      try {
-        await dnsGateway.deleteGameDNSRecords(appName);
-        appsDNSState.delete(appName);
-        appLastSeenTimestamps.delete(appName);
-        log.info(`Deleted DNS records for removed app ${appName}`);
-      } catch (error) {
-        log.error(`Failed to delete DNS records for ${appName}: ${error.message}`);
+      // Delete from all configured zones
+      let deletedCount = 0;
+      for (const zone of config.dns.zones) {
+        try {
+          await dnsGateway.deleteGameDNSRecords(appName, zone.name);
+          deletedCount += 1;
+        } catch (error) {
+          log.error(`Failed to delete DNS records for ${appName} in ${zone.name}: ${error.message}`);
+          // Continue deleting from other zones
+        }
       }
+
+      // Clean up state
+      appsDNSState.delete(appName);
+      appLastSeenTimestamps.delete(appName);
+      log.info(`Deleted DNS records for removed app ${appName} from ${deletedCount}/${config.dns.zones.length} zones`);
     }
   }
 
@@ -179,13 +203,13 @@ async function runProcessingLoop() {
     const currentSeenApps = new Set();
 
     // Process each app - get master IP from FDM and update DNS if needed
-    let updatedCount = 0;
+    let zoneUpdatesCount = 0;
     for (const app of matchedApps) {
       currentSeenApps.add(app.name);
 
       // eslint-disable-next-line no-await-in-loop
-      const updated = await processApp(app);
-      if (updated) updatedCount += 1;
+      const zonesUpdated = await processApp(app);
+      zoneUpdatesCount += zonesUpdated;
     }
 
     // Handle cleanup of removed apps
@@ -195,7 +219,7 @@ async function runProcessingLoop() {
     lastSeenApps = currentSeenApps;
 
     const elapsedMs = Date.now() - startTime;
-    log.info(`Apps DNS loop completed: ${matchedApps.length} apps, ${updatedCount} DNS updates, ${elapsedMs}ms`);
+    log.info(`Apps DNS loop completed: ${matchedApps.length} apps, ${zoneUpdatesCount} zone updates, ${elapsedMs}ms`);
   } catch (error) {
     log.error(`Error in apps DNS processing loop: ${error.message}`);
   } finally {
@@ -255,12 +279,15 @@ function getStatus() {
 
 /**
  * Get DNS state for all tracked apps
- * @returns {Object} Map of app names to their DNS IPs
+ * @returns {Object} Nested map of app names to zones to their DNS IPs
  */
 function getDNSState() {
   const state = {};
-  for (const [appName, ips] of appsDNSState) {
-    state[appName] = ips;
+  for (const [appName, zoneMap] of appsDNSState) {
+    state[appName] = {};
+    for (const [zone, ips] of zoneMap) {
+      state[appName][zone] = ips;
+    }
   }
   return state;
 }

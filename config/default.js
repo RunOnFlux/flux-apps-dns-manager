@@ -18,8 +18,10 @@ module.exports = {
   },
   // DNS configuration
   dns: {
-    zone: 'app2.runonflux.io', // Default zone for game DNS records
-    ttl: 300, // DNS record TTL in seconds
+    zones: [
+      { name: 'app.runonflux.io', ttl: 300 },
+      { name: 'app2.runonflux.io', ttl: 300 },
+    ],
   },
   // DNS Gateway configuration (mTLS authenticated)
   dnsGateway: {
@@ -35,7 +37,8 @@ module.exports = {
     // Game type prefixes to match (case-insensitive prefix matching)
     gameTypes: gamesConfig.gameTypes,
     // Polling interval for checking game apps (ms)
-    pollingIntervalMs: 10000,
+    // 60s is reasonable since DNS TTL is 300s and IP changes are infrequent
+    pollingIntervalMs: 60000,
     // Grace period before deleting DNS records for removed apps (ms)
     // Protects against accidental deletion during service restart or API issues
     deletionGracePeriodMs: 60 * 60 * 1000, // 1 hour

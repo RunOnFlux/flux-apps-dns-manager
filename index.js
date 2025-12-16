@@ -10,7 +10,7 @@ const { port } = config.server;
 
 server.listen(port, () => {
   log.info(`Flux Apps DNS Manager listening on port ${port}`);
-  log.info(`DNS Zone: ${config.dns.zone}`);
+  log.info(`DNS Zones: ${config.dns.zones.map((z) => `${z.name} (TTL: ${z.ttl}s)`).join(', ')}`);
   log.info(`Game types: ${config.games.gameTypes.join(', ')}`);
   log.info(`Polling interval: ${config.games.pollingIntervalMs / 1000}s`);
   log.info(`Deletion grace period: ${config.games.deletionGracePeriodMs / 1000 / 60} minutes`);

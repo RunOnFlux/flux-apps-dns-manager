@@ -7,16 +7,21 @@ const axiosConfig = {
 };
 
 /**
- * Get the FDM index (1-4) based on the first letter of the app name
- * - a-g -> 1
- * - h-n -> 2
- * - o-u -> 3
- * - v-z -> 4
+ * Get the FDM index based on the first letter of the app name
+ * Distributes apps evenly across available FDM servers
  * @param {string} appName - Application name
- * @returns {number} FDM index (1-4)
+ * @param {number} serverCount - Number of FDM servers (2 or 4)
+ * @returns {number} FDM index (1-serverCount)
  */
-function getFdmIndex(appName) {
+function getFdmIndex(appName, serverCount = 4) {
   const firstLetter = appName.substring(0, 1).toLowerCase();
+
+  if (serverCount === 2) {
+    // For 2 servers: a-m -> 1, n-z -> 2
+    return firstLetter.match(/[n-z]/) ? 2 : 1;
+  }
+
+  // For 4 servers: a-g -> 1, h-n -> 2, o-u -> 3, v-z -> 4
   if (firstLetter.match(/[h-n]/)) {
     return 2;
   }
@@ -32,25 +37,28 @@ function getFdmIndex(appName) {
 /**
  * Get the FDM base URL for a specific app
  * @param {string} appName - Application name
+ * @param {string} baseUrlPattern - FDM base URL pattern with {index} placeholder
+ * @param {number} serverCount - Number of FDM servers
  * @returns {string} FDM base URL
  */
-function getFdmBaseUrl(appName) {
-  const index = getFdmIndex(appName);
-  return config.fdm.baseUrlPattern.replace('{index}', index);
+function getFdmBaseUrl(appName, baseUrlPattern, serverCount) {
+  const index = getFdmIndex(appName, serverCount);
+  return baseUrlPattern.replace('{index}', index);
 }
 
 /**
  * Get the master IP for an app from FDM's /appips endpoint
  * This returns the IP(s) currently configured in HAProxy for the app
  * @param {string} appName - Application name
+ * @param {Object} fdmConfig - FDM configuration object with baseUrlPattern, serverCount, timeout
  * @returns {Promise<string|null>} The master IP or null if not available
  */
-async function getAppMasterIpFromFdm(appName) {
-  const fdmBaseUrl = getFdmBaseUrl(appName);
+async function getAppMasterIpFromFdm(appName, fdmConfig) {
+  const fdmBaseUrl = getFdmBaseUrl(appName, fdmConfig.baseUrlPattern, fdmConfig.serverCount);
   const url = `${fdmBaseUrl}/appips/${appName}`;
 
   try {
-    const response = await axios.get(url, { timeout: config.fdm.timeout });
+    const response = await axios.get(url, { timeout: fdmConfig.timeout });
 
     if (response.data.status === 'success' && response.data.data) {
       const { ips } = response.data.data;

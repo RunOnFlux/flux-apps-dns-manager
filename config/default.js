@@ -10,17 +10,27 @@ module.exports = {
     baseUrl: 'https://api.runonflux.io',
     timeout: 30000,
   },
-  // FDM (Flux Domain Manager) API endpoints
-  fdm: {
-    // Base URL pattern - {index} will be replaced with 1-4 based on app name
-    baseUrlPattern: 'https://fdm-fn-1-{index}.runonflux.io',
-    timeout: 10000,
-  },
-  // DNS configuration
+  // DNS configuration with zone-specific FDM settings
   dns: {
     zones: [
-      { name: 'app.runonflux.io', ttl: 300 },
-      { name: 'app2.runonflux.io', ttl: 300 },
+      // {
+      //   name: 'app.runonflux.io',
+      //   ttl: 300,
+      //   fdm: {
+      //     baseUrlPattern: 'http://fdm-fn-1-{index}.runonflux.io:16130',
+      //     serverCount: 4,
+      //     timeout: 10000,
+      //   },
+      // },
+      {
+        name: 'app2.runonflux.io',
+        ttl: 300,
+        fdm: {
+          baseUrlPattern: 'http://fdm-fn-2-{index}.runonflux.io:16130',
+          serverCount: 2,
+          timeout: 10000,
+        },
+      },
     ],
   },
   // DNS Gateway configuration (mTLS authenticated)

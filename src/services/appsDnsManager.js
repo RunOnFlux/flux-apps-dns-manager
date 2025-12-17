@@ -71,20 +71,20 @@ function updateDNSState(appName, ips, zone) {
 async function processApp(app) {
   const appName = app.name;
 
-  // Get the master IP from FDM - this is the IP currently set in HAProxy
-  const masterIP = await fluxApi.getAppMasterIpFromFdm(appName);
-
-  if (!masterIP) {
-    log.debug(`No master IP available from FDM for ${appName}, skipping`);
-    return 0;
-  }
-
-  // Clean the master IP (remove any brackets for IPv6)
-  const cleanMasterIP = masterIP.replace(/\[|\]/g, '');
-
   // Process each configured zone
   let updatedCount = 0;
   for (const zone of config.dns.zones) {
+    // Get the master IP from FDM using zone-specific FDM config
+    const masterIP = await fluxApi.getAppMasterIpFromFdm(appName, zone.fdm);
+
+    if (!masterIP) {
+      log.debug(`No master IP available from FDM for ${appName} in ${zone.name}, skipping`);
+      continue;
+    }
+
+    // Clean the master IP (remove any brackets for IPv6)
+    const cleanMasterIP = masterIP.replace(/\[|\]/g, '');
+
     // Check if DNS update is needed for this zone
     if (!hasIPsChanged(appName, [cleanMasterIP], zone.name)) {
       log.debug(`No DNS change needed for ${appName} in ${zone.name}`);

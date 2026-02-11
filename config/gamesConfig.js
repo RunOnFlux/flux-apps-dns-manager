@@ -38,6 +38,7 @@ const gameTypes = [
   'satisfactory',
   'conan',
   'sevendays',
+  'teamspeak6'
 ];
 
 module.exports = {

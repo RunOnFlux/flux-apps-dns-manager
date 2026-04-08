@@ -36,9 +36,22 @@ const gameTypes = [
   'valheim',
   'terraria',
   'satisfactory',
-  'conan',
   'sevendays',
-  'teamspeak'
+  'teamspeak',
+  '7daystodie',
+  'arksurvivalascended',
+  'barotrauma',
+  'conanexiles',
+  'corekeeper',
+  'counterstrike',
+  'dayz',
+  'dontstarvetogether',
+  'garrysmod',
+  'projectzomboid',
+  'sonsoftheforest',
+  'spaceengineers',
+  'unturned',
+  'vrising',
 ];
 
 module.exports = {

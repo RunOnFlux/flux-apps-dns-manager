@@ -51,7 +51,7 @@ const gameTypes = [
   'sonsoftheforest',
   'spaceengineers',
   'unturned',
-  'vrising',
+  'vrising'
 ];
 
 module.exports = {

@@ -169,7 +169,7 @@
       ansible.builtin.systemd:
         name: flux-apps-dns-manager
         enabled: yes
-        state: started
+        state: "{{ 'restarted' if deploy_app_files.changed | default(false) else 'started' }}"
         daemon_reload: yes
 
     - name: Wait for service to start

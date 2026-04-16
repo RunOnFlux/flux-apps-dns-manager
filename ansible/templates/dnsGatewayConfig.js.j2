@@ -1,0 +1,19 @@
+// DNS Gateway API configuration
+// This service uses mTLS for authentication
+// This file is managed by Ansible - do not edit manually
+
+const endpoint = '{{ dns_gateway_endpoint }}';
+const certPath = '{{ dns_gateway_cert_path }}';
+const keyPath = '{{ dns_gateway_key_path }}';
+const caPath = '{{ dns_gateway_ca_path }}';
+const timeout = 30000;
+const enabled = {{ dns_gateway_enabled | lower }};
+
+module.exports = {
+  endpoint,
+  certPath,
+  keyPath,
+  caPath,
+  timeout,
+  enabled,
+};

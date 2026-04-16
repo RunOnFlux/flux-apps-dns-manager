@@ -1,0 +1,31 @@
+[Unit]
+Description=Flux Apps DNS Manager
+Documentation=https://github.com/RunOnFlux/flux-apps-dns-manager
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=apps-dns-manager
+Group=apps-dns-manager
+WorkingDirectory=/opt/flux-apps-dns-manager
+ExecStart=/usr/bin/node index.js
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=flux-apps-dns-manager
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/flux-apps-dns-manager
+ReadOnlyPaths=/etc/ssl/certs /etc/ssl/private
+
+# Environment
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target

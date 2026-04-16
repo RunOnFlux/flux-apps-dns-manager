@@ -13,15 +13,15 @@ module.exports = {
   // DNS configuration with zone-specific FDM settings
   dns: {
     zones: [
-      // {
-      //   name: 'app.runonflux.io',
-      //   ttl: 300,
-      //   fdm: {
-      //     baseUrlPattern: 'http://fdm-fn-1-{index}.runonflux.io:16130',
-      //     serverCount: 4,
-      //     timeout: 10000,
-      //   },
-      // },
+      {
+        name: 'app.runonflux.io',
+        ttl: 300,
+        fdm: {
+          baseUrlPattern: 'http://fdm-fn-1-{index}.runonflux.io:16130',
+          serverCount: 4,
+          timeout: 10000,
+        },
+      },
       {
         name: 'app2.runonflux.io',
         ttl: 300,

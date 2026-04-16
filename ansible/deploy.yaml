@@ -15,8 +15,31 @@
     dns_gateway_key_path: ""
     dns_gateway_ca_path: ""
     dns_gateway_enabled: "false"
+    # CI runner SSH access
+    ci_ssh_allowed_ips:
+      - { ip: "37.59.187.34", name: "cluster-node-1" }
+      - { ip: "37.59.187.37", name: "cluster-node-2" }
+      - { ip: "37.59.187.151", name: "cluster-node-3" }
+      - { ip: "5.75.131.22", name: "vpn-eu" }
+      - { ip: "5.161.240.216", name: "vpn-us" }
+      - { ip: "5.39.57.2", name: "cluster-vpn-1" }
+      - { ip: "5.39.57.37", name: "cluster-vpn-2" }
 
   tasks:
+    - name: Allow SSH from CI runners
+      community.general.ufw:
+        rule: allow
+        name: OpenSSH
+        from_ip: "{{ item.ip }}"
+        comment: "{{ item.name }}"
+      loop: "{{ ci_ssh_allowed_ips }}"
+
+    - name: Deny SSH from unauthorized sources
+      community.general.ufw:
+        rule: deny
+        name: OpenSSH
+        comment: "Deny SSH from unauthorized sources"
+
     - name: Install Node.js repository (NodeSource)
       ansible.builtin.shell: |
         curl -fsSL https://deb.nodesource.com/setup_22.x | bash -

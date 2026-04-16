@@ -25,17 +25,20 @@ jobs:
       - name: Install Ansible
         run: pip install ansible
 
-      - name: Set up SSH key
+      - name: Setup SSH key
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         run: |
           mkdir -p ~/.ssh
-          echo "$SSH_PRIVATE_KEY" > private_key
-          chmod 600 private_key
-          echo "Host *" >> ~/.ssh/config
-          echo "  IdentityFile $(pwd)/private_key" >> ~/.ssh/config
-          echo "  StrictHostKeyChecking no" >> ~/.ssh/config
-          echo "  UserKnownHostsFile /dev/null" >> ~/.ssh/config
+          echo "$SSH_PRIVATE_KEY" > flux-cert-1.key
+          chmod 600 flux-cert-1.key
+
+          cat >> ~/.ssh/config << EOF
+          Host 10.100.0.172
+              IdentityFile $(pwd)/flux-cert-1.key
+              IdentitiesOnly yes
+              StrictHostKeyChecking no
+          EOF
 
       - name: Run Deployment
         run: |

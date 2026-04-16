@@ -110,6 +110,7 @@
           - "--exclude=.env"
           - "--exclude=ansible"
           - "--exclude=config/dnsGatewayConfig.js"
+      register: deploy_app_files
 
     - name: Ensure config directory exists
       ansible.builtin.file:
@@ -135,13 +136,25 @@
         mode: "0644"
       when: dns_gateway_endpoint != ""
 
+    - name: Check if node_modules exists
+      ansible.builtin.stat:
+        path: "{{ app_dir }}/node_modules"
+      register: node_modules
+
     - name: Install npm dependencies
       ansible.builtin.command:
         cmd: npm install --omit=dev
         chdir: "{{ app_dir }}"
-      become_user: "{{ service_user }}"
+      when: not node_modules.stat.exists or deploy_app_files.changed
       register: npm_install
-      changed_when: npm_install.rc == 0
+
+    - name: Set ownership after npm install
+      ansible.builtin.file:
+        path: "{{ app_dir }}"
+        owner: "{{ service_user }}"
+        group: "{{ service_user }}"
+        recurse: yes
+      when: npm_install.changed | default(false)
 
     - name: Deploy systemd service file
       ansible.builtin.template:

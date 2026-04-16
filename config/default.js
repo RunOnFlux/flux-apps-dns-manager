@@ -42,6 +42,17 @@ module.exports = {
     timeout: dnsGatewayConfig.timeout,
     enabled: dnsGatewayConfig.enabled,
   },
+  // Enterprise spec decryption (mTLS)
+  specDecryptor: {
+    baseUrl: 'https://10.100.0.170/api/',
+    keyPath: '/etc/ssl/private/fdm-arcane.key',
+    certPath: '/etc/ssl/certs/fdm-arcane.pem',
+    caPath: '/etc/ssl/certs/fdm-arcane-ca.pem',
+    timeoutMs: 10000,
+    concurrency: 5,
+    retries: 4,
+    retryDelayMs: 16000,
+  },
   // Game apps configuration
   games: {
     // Game type prefixes to match (case-insensitive prefix matching)

@@ -2,6 +2,7 @@ const config = require('config');
 const log = require('../lib/log');
 const fluxApi = require('./fluxApi');
 const dnsGateway = require('./dnsGateway');
+const specDecryptor = require('./specDecryptor');
 
 // DNS state tracking to prevent unnecessary updates
 // Tracks current DNS state per app - persists until service restart
@@ -195,6 +196,9 @@ async function runProcessingLoop() {
       return;
     }
 
+    // Decrypt enterprise app specs (populates compose/contacts in-place)
+    await specDecryptor.decryptEnterpriseSpecs(allAppSpecs);
+
     // Filter to get only G-mode apps
     const matchedApps = fluxApi.filterGameApps(allAppSpecs, config.games.gameTypes);
     log.info(`Found ${matchedApps.length} G-mode apps`);
@@ -238,6 +242,12 @@ function start() {
   if (!dnsReady) {
     log.error('Failed to initialize DNS Gateway - service will not update DNS records');
     log.info('Check dnsGatewayConfig.js configuration');
+  }
+
+  // Initialize spec decryptor for enterprise apps (graceful - non-enterprise apps still work)
+  const decryptorReady = specDecryptor.initialize();
+  if (!decryptorReady) {
+    log.warn('Spec decryptor not available - enterprise apps will be skipped');
   }
 
   // Run initial loop

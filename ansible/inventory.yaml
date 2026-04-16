@@ -1,0 +1,11 @@
+---
+# Flux Apps DNS Manager Inventory
+
+all:
+  hosts:
+    flux-cert-1:
+      ansible_host: 10.100.0.172
+
+  vars:
+    ansible_user: ansible
+    ansible_python_interpreter: /usr/bin/python3

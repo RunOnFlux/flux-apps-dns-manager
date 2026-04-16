@@ -1,0 +1,157 @@
+---
+# Deploy Flux Apps DNS Manager Service
+
+- name: Deploy Flux Apps DNS Manager
+  hosts: all
+  become: yes
+
+  vars:
+    service_port: 16140
+    app_dir: /opt/flux-apps-dns-manager
+    service_user: apps-dns-manager
+    # DNS Gateway configuration (must be provided with -e)
+    dns_gateway_endpoint: ""
+    dns_gateway_cert_path: ""
+    dns_gateway_key_path: ""
+    dns_gateway_ca_path: ""
+    dns_gateway_enabled: "false"
+
+  tasks:
+    - name: Install Node.js repository (NodeSource)
+      ansible.builtin.shell: |
+        curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+      args:
+        creates: /etc/apt/sources.list.d/nodesource.list
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+
+    - name: Install Node.js and required packages
+      ansible.builtin.package:
+        name:
+          - nodejs
+        state: present
+        update_cache: yes
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+
+    - name: Verify Node.js installation
+      ansible.builtin.command: node --version
+      register: node_version
+      changed_when: false
+
+    - name: Display Node.js version
+      ansible.builtin.debug:
+        msg: "Node.js version: {{ node_version.stdout }}"
+
+    - name: Ensure ssl-cert group exists
+      ansible.builtin.package:
+        name: ssl-cert
+        state: present
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+
+    - name: Create apps-dns-manager system user
+      ansible.builtin.user:
+        name: "{{ service_user }}"
+        system: yes
+        shell: /usr/sbin/nologin
+        home: "{{ app_dir }}"
+        create_home: no
+        groups: ssl-cert
+        append: yes
+
+    - name: Create application directory
+      ansible.builtin.file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: "{{ service_user }}"
+        group: "{{ service_user }}"
+        mode: "0755"
+
+    - name: Create log directory
+      ansible.builtin.file:
+        path: /var/log/flux-apps-dns-manager
+        state: directory
+        owner: "{{ service_user }}"
+        group: "{{ service_user }}"
+        mode: "0755"
+
+    - name: Deploy application files
+      ansible.builtin.synchronize:
+        src: "{{ playbook_dir }}/../"
+        dest: "{{ app_dir }}/"
+        delete: yes
+        rsync_opts:
+          - "--exclude=node_modules"
+          - "--exclude=.git"
+          - "--exclude=.env"
+          - "--exclude=ansible"
+          - "--exclude=config/dnsGatewayConfig.js"
+
+    - name: Ensure config directory exists
+      ansible.builtin.file:
+        path: "{{ app_dir }}/config"
+        state: directory
+        owner: "{{ service_user }}"
+        group: "{{ service_user }}"
+        mode: "0755"
+
+    - name: Set ownership of application files
+      ansible.builtin.file:
+        path: "{{ app_dir }}"
+        owner: "{{ service_user }}"
+        group: "{{ service_user }}"
+        recurse: yes
+
+    - name: Deploy DNS Gateway configuration
+      ansible.builtin.template:
+        src: dnsGatewayConfig.js.j2
+        dest: "{{ app_dir }}/config/dnsGatewayConfig.js"
+        owner: "{{ service_user }}"
+        group: "{{ service_user }}"
+        mode: "0644"
+      when: dns_gateway_endpoint != ""
+
+    - name: Install npm dependencies
+      ansible.builtin.command:
+        cmd: npm install --omit=dev
+        chdir: "{{ app_dir }}"
+      become_user: "{{ service_user }}"
+      register: npm_install
+      changed_when: npm_install.rc == 0
+
+    - name: Deploy systemd service file
+      ansible.builtin.template:
+        src: flux-apps-dns-manager.service.j2
+        dest: /etc/systemd/system/flux-apps-dns-manager.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload systemd
+
+    - name: Enable and start flux-apps-dns-manager service
+      ansible.builtin.systemd:
+        name: flux-apps-dns-manager
+        enabled: yes
+        state: started
+        daemon_reload: yes
+
+    - name: Wait for service to start
+      ansible.builtin.wait_for:
+        port: "{{ service_port }}"
+        host: 127.0.0.1
+        timeout: 30
+
+    - name: Check service status
+      ansible.builtin.systemd:
+        name: flux-apps-dns-manager
+      register: service_status
+
+    - name: Display service status
+      ansible.builtin.debug:
+        msg: "Flux Apps DNS Manager service is {{ service_status.status.ActiveState }}"
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: yes

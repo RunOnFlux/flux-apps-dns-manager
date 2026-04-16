@@ -1,0 +1,43 @@
+name: Manual Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch to deploy
+        type: string
+        default: main
+
+jobs:
+  deploy:
+    runs-on: runonflux
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.inputs.branch }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install Ansible
+        run: pip install ansible
+
+      - name: Set up SSH key
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > private_key
+          chmod 600 private_key
+          echo "Host *" >> ~/.ssh/config
+          echo "  IdentityFile $(pwd)/private_key" >> ~/.ssh/config
+          echo "  StrictHostKeyChecking no" >> ~/.ssh/config
+          echo "  UserKnownHostsFile /dev/null" >> ~/.ssh/config
+
+      - name: Run Deployment
+        run: |
+          cd ansible
+          ansible-playbook -i inventory.yaml deploy.yaml

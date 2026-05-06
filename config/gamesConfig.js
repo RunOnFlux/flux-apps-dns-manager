@@ -52,7 +52,8 @@ const gameTypes = [
   'spaceengineers',
   'unturned',
   'vrising',
-  'windrose'
+  'windrose',
+  'fivem'
 ];
 
 module.exports = {

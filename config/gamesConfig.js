@@ -53,8 +53,7 @@ const gameTypes = [
   'unturned',
   'vrising',
   'windrose',
-  'fivem',
-  'projectzomboid'
+  'fivem'
 ];
 
 module.exports = {

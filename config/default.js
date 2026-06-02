@@ -62,6 +62,6 @@ module.exports = {
     pollingIntervalMs: 60000,
     // Grace period before deleting DNS records for removed apps (ms)
     // Protects against accidental deletion during service restart or API issues
-    deletionGracePeriodMs: 60 * 60 * 1000, // 1 hour
+    deletionGracePeriodMs: 24 * 60 * 60 * 1000, // 24 hours
   },
 };

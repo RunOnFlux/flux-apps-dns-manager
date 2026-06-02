@@ -184,26 +184,6 @@ function isGameApp(appName, gameTypes) {
   return false;
 }
 
-/**
- * Filter app specifications to get only G-mode game apps
- * @param {Array} appSpecs - All application specifications
- * @param {string[]} gameTypes - Array of game type prefixes to match
- * @returns {Array} Filtered game app specifications
- */
-function filterGameApps(appSpecs, gameTypes) {
-  return appSpecs.filter((app) => {
-    // Must be a G-mode app
-    if (!isGModeApp(app)) {
-      return false;
-    }
-    // Must match a game type prefix
-    if (!isGameApp(app.name, gameTypes)) {
-      return false;
-    }
-    return true;
-  });
-}
-
 module.exports = {
   getAppSpecifications,
   getApplicationLocation,
@@ -213,5 +193,4 @@ module.exports = {
   getFdmBaseUrl,
   isGModeApp,
   isGameApp,
-  filterGameApps,
 };

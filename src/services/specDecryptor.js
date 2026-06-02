@@ -7,10 +7,6 @@ const log = require('../lib/log');
 
 let api = null;
 
-// Cache decrypted specs by hash to avoid re-decrypting every poll loop
-// Map<hash, { spec, expiresAt }>
-const decryptCache = new Map();
-
 function sleep(ms) {
   return new Promise((r) => { setTimeout(r, ms); });
 }
@@ -21,7 +17,9 @@ function sleep(ms) {
  */
 function initialize() {
   try {
-    const { keyPath, certPath, caPath, baseUrl, timeoutMs } = config.specDecryptor;
+    const {
+      keyPath, certPath, caPath, baseUrl, timeoutMs,
+    } = config.specDecryptor;
 
     if (!fs.existsSync(keyPath) || !fs.existsSync(certPath) || !fs.existsSync(caPath)) {
       log.error('Spec decryptor certificates not found, enterprise apps will not be processed');
@@ -111,23 +109,15 @@ function decryptAesData(appName, nonceCiphertextTag, base64AesKey) {
 }
 
 /**
- * Decrypt a single enterprise app spec
- * @param {Object} appSpec
- * @returns {Promise<Object|null>} Decrypted spec or null on failure
+ * Decrypt a single enterprise app spec and return its compose array.
+ * Stateless: performs no caching and does not mutate the input spec. Callers
+ * are responsible for caching the result they derive from it.
+ * @param {Object} spec - Encrypted enterprise app specification
+ * @returns {Promise<Array|null>} Decrypted compose array, or null on failure
  */
-async function decryptAppSpec(appSpec) {
-  const spec = appSpec;
-  const { enterprise, hash } = spec;
-
-  // Check cache
-  const cached = decryptCache.get(hash);
-  if (cached && cached.expiresAt > Date.now()) {
-    log.debug(`Encrypted app spec ${spec.name} found in cache`);
-    return cached.spec;
-  }
-
-  const { owner } = spec;
-  if (!owner) return null;
+async function decryptCompose(spec) {
+  const { enterprise, owner, name } = spec;
+  if (!owner || !enterprise) return null;
 
   const enterpriseBuf = Buffer.from(enterprise, 'base64');
   const aesKeyEncrypted = enterpriseBuf.subarray(0, 256);
@@ -137,7 +127,7 @@ async function decryptAppSpec(appSpec) {
 
   const payload = {
     fluxID: owner,
-    appName: spec.name,
+    appName: name,
     message: base64EncryptedAesKey,
     blockHeight: 9999999,
   };
@@ -149,12 +139,12 @@ async function decryptAppSpec(appSpec) {
   for (let attempt = 0; attempt < maxRetries; attempt += 1) {
     // eslint-disable-next-line no-await-in-loop
     const response = await api.post('decryptMessageRSA', payload).catch((err) => {
-      log.warn(`Spec decrypt call failed for ${spec.name}: ${err.message}`);
+      log.warn(`Spec decrypt call failed for ${name}: ${err.message}`);
       return null;
     });
 
     if (!response) {
-      log.debug(`Decrypt key for ${spec.name} failed, retrying in ${retryDelayMs / 1000}s`);
+      log.debug(`Decrypt key for ${name} failed, retrying in ${retryDelayMs / 1000}s`);
       // eslint-disable-next-line no-await-in-loop
       await sleep(retryDelayMs);
       continue;
@@ -174,87 +164,26 @@ async function decryptAppSpec(appSpec) {
     base64AesKey = aesKey;
     if (base64AesKey) break;
 
-    log.debug(`AES key not found for ${spec.name}, retrying in ${retryDelayMs / 1000}s`);
+    log.debug(`AES key not found for ${name}, retrying in ${retryDelayMs / 1000}s`);
     // eslint-disable-next-line no-await-in-loop
     await sleep(retryDelayMs);
   }
 
   if (!base64AesKey) return null;
 
-  const decrypted = decryptAesData(spec.name, nonceCiphertextTag, base64AesKey);
+  const decrypted = decryptAesData(name, nonceCiphertextTag, base64AesKey);
   if (!decrypted) return null;
 
   const parsed = parseJson(decrypted);
   if (!parsed) return null;
 
   const hydrated = hydrate(parsed);
-
-  spec.compose = hydrated.compose;
-  spec.contacts = hydrated.contacts;
-  spec.enterprise = '';
-
-  // Cache with random 24-48h TTL to avoid thundering herd
-  const ttl = 86_400_000 + Math.floor(Math.random() * 86_400_000);
-  decryptCache.set(hash, { spec, expiresAt: Date.now() + ttl });
-
-  log.info(`Decrypted enterprise app spec: ${spec.name}`);
-  return spec;
-}
-
-/**
- * Decrypt all enterprise specs from an app spec list (concurrency-limited)
- * Specs are decrypted in-place (compose/contacts populated, enterprise cleared)
- * @param {Array} specs - All app specifications
- * @returns {Promise<Array>} Same specs array with enterprise apps decrypted
- */
-async function decryptEnterpriseSpecs(specs) {
-  if (!isReady()) {
-    log.debug('Spec decryptor not initialized, skipping enterprise decryption');
-    return specs;
-  }
-
-  const enterpriseSpecs = specs.filter(
-    (spec) => spec.version >= 8 && spec.enterprise,
-  );
-
-  if (enterpriseSpecs.length === 0) return specs;
-
-  log.info(`Decrypting ${enterpriseSpecs.length} enterprise app specs`);
-
-  const concurrency = config.specDecryptor.concurrency || 5;
-  const tasks = enterpriseSpecs.map((spec) => () => decryptAppSpec(spec));
-
-  // Run with concurrency limit (ported from FDM serviceHelper.js)
-  const results = [];
-  const executing = new Set();
-  for (const task of tasks) {
-    const p = task().finally(() => executing.delete(p));
-    executing.add(p);
-    results.push(p);
-    if (executing.size >= concurrency) {
-      // eslint-disable-next-line no-await-in-loop
-      await Promise.race(executing);
-    }
-  }
-  const settled = await Promise.allSettled(results);
-
-  let decrypted = 0;
-  let failed = 0;
-  for (const result of settled) {
-    if (result.status === 'fulfilled' && result.value) {
-      decrypted += 1;
-    } else {
-      failed += 1;
-    }
-  }
-
-  log.info(`Enterprise decryption complete: ${decrypted} succeeded, ${failed} failed`);
-
-  return specs;
+  log.debug(`Decrypted enterprise app spec: ${name}`);
+  return hydrated.compose || null;
 }
 
 module.exports = {
   initialize,
   isReady,
-  decryptEnterpriseSpecs,
+  decryptCompose,
 };

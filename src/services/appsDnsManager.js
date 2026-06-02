@@ -3,15 +3,12 @@ const log = require('../lib/log');
 const fluxApi = require('./fluxApi');
 const dnsGateway = require('./dnsGateway');
 const specDecryptor = require('./specDecryptor');
+const gModeResolver = require('./gModeResolver');
 
 // DNS state tracking to prevent unnecessary updates
 // Tracks current DNS state per app - persists until service restart
 // Memory bounded by active app count (~10-50 apps)
 const appsDNSState = new Map();
-
-// Track which apps were seen in the last loop
-// Used to detect when apps are removed from the network
-let lastSeenApps = new Set();
 
 // Track when each app was last seen (for deletion grace period)
 // Map<appName, timestamp> - only starts tracking when app disappears
@@ -66,12 +63,10 @@ function updateDNSState(appName, ips, zone) {
 /**
  * Process a single app - update DNS if needed
  * Gets the master IP from FDM (Flux Domain Manager) which knows the current HAProxy state
- * @param {Object} app - App specification
+ * @param {string} appName - Application name
  * @returns {Promise<number>} Number of zones successfully updated
  */
-async function processApp(app) {
-  const appName = app.name;
-
+async function processApp(appName) {
   // Process each configured zone
   let updatedCount = 0;
   for (const zone of config.dns.zones) {
@@ -110,27 +105,25 @@ async function processApp(app) {
 
 /**
  * Handle cleanup of DNS records for removed apps
- * Uses grace period to prevent accidental deletion
+ * Iterates the apps we currently manage DNS for; any that have been absent from
+ * the network continuously for the grace period have their records deleted.
  * @param {Set<string>} currentSeenApps - Apps seen in current loop
  */
 async function handleRemovedApps(currentSeenApps) {
   const currentTime = Date.now();
   const gracePeriodMs = config.games.deletionGracePeriodMs;
 
-  // Find apps that were in lastSeenApps but not in currentSeenApps
-  const removedApps = [...lastSeenApps].filter(
-    (appName) => !currentSeenApps.has(appName),
-  );
-
-  for (const appName of removedApps) {
-    const cachedState = appsDNSState.get(appName);
-
-    // Only process if we have DNS state for this app
-    if (!cachedState || cachedState.size === 0) {
+  // Snapshot keys: we mutate appsDNSState while iterating.
+  for (const appName of [...appsDNSState.keys()]) {
+    // Present this loop - cancel any pending deletion.
+    if (currentSeenApps.has(appName)) {
+      if (appLastSeenTimestamps.delete(appName)) {
+        log.info(`App ${appName} reappeared, canceling deletion`);
+      }
       continue;
     }
 
-    // Track when we first noticed this app was missing
+    // Missing - start the grace period the first time we notice it's gone.
     if (!appLastSeenTimestamps.has(appName)) {
       appLastSeenTimestamps.set(appName, currentTime);
       const gracePeriodMinutes = Math.round(gracePeriodMs / 1000 / 60);
@@ -138,39 +131,32 @@ async function handleRemovedApps(currentSeenApps) {
       continue;
     }
 
-    // Check if grace period has elapsed
-    const firstMissingTime = appLastSeenTimestamps.get(appName);
-    const elapsedMs = currentTime - firstMissingTime;
+    // Still within the grace period - wait.
+    const elapsedMs = currentTime - appLastSeenTimestamps.get(appName);
+    if (elapsedMs < gracePeriodMs) {
+      continue;
+    }
 
-    if (elapsedMs >= gracePeriodMs) {
-      const elapsedMinutes = Math.round(elapsedMs / 1000 / 60);
-      log.info(`App ${appName} missing for ${elapsedMinutes} minutes, deleting DNS records from all zones`);
+    // Missing long enough - delete from all configured zones.
+    const elapsedMinutes = Math.round(elapsedMs / 1000 / 60);
+    log.info(`App ${appName} missing for ${elapsedMinutes} minutes, deleting DNS records from all zones`);
 
-      // Delete from all configured zones
-      let deletedCount = 0;
-      for (const zone of config.dns.zones) {
-        try {
-          await dnsGateway.deleteGameDNSRecords(appName, zone.name);
-          deletedCount += 1;
-        } catch (error) {
-          log.error(`Failed to delete DNS records for ${appName} in ${zone.name}: ${error.message}`);
-          // Continue deleting from other zones
-        }
+    let deletedCount = 0;
+    for (const zone of config.dns.zones) {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await dnsGateway.deleteGameDNSRecords(appName, zone.name);
+        deletedCount += 1;
+      } catch (error) {
+        log.error(`Failed to delete DNS records for ${appName} in ${zone.name}: ${error.message}`);
+        // Continue deleting from other zones
       }
-
-      // Clean up state
-      appsDNSState.delete(appName);
-      appLastSeenTimestamps.delete(appName);
-      log.info(`Deleted DNS records for removed app ${appName} from ${deletedCount}/${config.dns.zones.length} zones`);
     }
-  }
 
-  // Clear timestamps for apps that reappeared
-  for (const appName of currentSeenApps) {
-    if (appLastSeenTimestamps.has(appName)) {
-      log.info(`App ${appName} reappeared, canceling deletion`);
-      appLastSeenTimestamps.delete(appName);
-    }
+    // Clean up state
+    appsDNSState.delete(appName);
+    appLastSeenTimestamps.delete(appName);
+    log.info(`Deleted DNS records for removed app ${appName} from ${deletedCount}/${config.dns.zones.length} zones`);
   }
 }
 
@@ -196,34 +182,29 @@ async function runProcessingLoop() {
       return;
     }
 
-    // Decrypt enterprise app specs (populates compose/contacts in-place)
-    await specDecryptor.decryptEnterpriseSpecs(allAppSpecs);
-
-    // Filter to get only G-mode apps
-    const matchedApps = fluxApi.filterGameApps(allAppSpecs, config.games.gameTypes);
-    log.info(`Found ${matchedApps.length} G-mode apps`);
+    // Resolve the G-mode game apps (decrypts enterprise specs only as needed)
+    const gameAppNames = await gModeResolver.resolveGameAppNames(
+      allAppSpecs,
+      config.games.gameTypes,
+    );
+    log.info(`Found ${gameAppNames.length} G-mode game apps`);
 
     // Track apps seen in this loop
-    const currentSeenApps = new Set();
+    const currentSeenApps = new Set(gameAppNames);
 
     // Process each app - get master IP from FDM and update DNS if needed
     let zoneUpdatesCount = 0;
-    for (const app of matchedApps) {
-      currentSeenApps.add(app.name);
-
+    for (const appName of gameAppNames) {
       // eslint-disable-next-line no-await-in-loop
-      const zonesUpdated = await processApp(app);
+      const zonesUpdated = await processApp(appName);
       zoneUpdatesCount += zonesUpdated;
     }
 
     // Handle cleanup of removed apps
     await handleRemovedApps(currentSeenApps);
 
-    // Update tracking for next loop
-    lastSeenApps = currentSeenApps;
-
     const elapsedMs = Date.now() - startTime;
-    log.info(`Apps DNS loop completed: ${matchedApps.length} apps, ${zoneUpdatesCount} zone updates, ${elapsedMs}ms`);
+    log.info(`Apps DNS loop completed: ${gameAppNames.length} apps, ${zoneUpdatesCount} zone updates, ${elapsedMs}ms`);
   } catch (error) {
     log.error(`Error in apps DNS processing loop: ${error.message}`);
   } finally {
@@ -283,7 +264,7 @@ function getStatus() {
     dnsGatewayEnabled: dnsGateway.isReady(),
     trackedApps: appsDNSState.size,
     pendingDeletions: appLastSeenTimestamps.size,
-    lastSeenApps: [...lastSeenApps],
+    managedApps: [...appsDNSState.keys()],
   };
 }
 

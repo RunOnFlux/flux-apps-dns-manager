@@ -53,7 +53,7 @@ const gameTypes = [
   'unturned',
   'vrising',
   'windrose',
-  'fivem'
+  'fivem',
 ];
 
 module.exports = {

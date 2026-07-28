@@ -149,41 +149,6 @@ async function getAllApplicationLocations() {
   }
 }
 
-/**
- * Check if an app specification is G-mode (has g: in containerData)
- * G-mode apps are single-instance apps that need master selection
- * @param {Object} appSpec - Application specification
- * @returns {boolean}
- */
-function isGModeApp(appSpec) {
-  if (appSpec.version <= 3) {
-    return appSpec.containerData && appSpec.containerData.includes('g:');
-  }
-  // Composed app - check all components
-  if (appSpec.compose) {
-    return appSpec.compose.some(
-      (component) => component.containerData && component.containerData.includes('g:'),
-    );
-  }
-  return false;
-}
-
-/**
- * Check if an app name matches any of the game type prefixes
- * @param {string} appName - Application name
- * @param {string[]} gameTypes - Array of game type prefixes
- * @returns {boolean}
- */
-function isGameApp(appName, gameTypes) {
-  const lowerName = appName.toLowerCase();
-  for (const gameType of gameTypes) {
-    if (lowerName.startsWith(gameType.toLowerCase())) {
-      return true;
-    }
-  }
-  return false;
-}
-
 module.exports = {
   getAppSpecifications,
   getApplicationLocation,
@@ -191,6 +156,4 @@ module.exports = {
   getAppMasterIpFromFdm,
   getFdmIndex,
   getFdmBaseUrl,
-  isGModeApp,
-  isGameApp,
 };

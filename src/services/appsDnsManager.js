@@ -3,7 +3,8 @@ const log = require('../lib/log');
 const fluxApi = require('./fluxApi');
 const dnsGateway = require('./dnsGateway');
 const specDecryptor = require('./specDecryptor');
-const gModeResolver = require('./gModeResolver');
+const appResolver = require('./appResolver');
+const recordPlanner = require('./recordPlanner');
 
 // DNS state tracking to prevent unnecessary updates
 // Tracks current DNS state per app - persists until service restart
@@ -61,38 +62,58 @@ function updateDNSState(appName, ips, zone) {
 }
 
 /**
- * Process a single app - update DNS if needed
- * Gets the master IP from FDM (Flux Domain Manager) which knows the current HAProxy state
- * @param {string} appName - Application name
+ * Gather what the platform currently believes about where an app is, fetching only
+ * what the app's strategy actually consumes: a single-answer app needs to know
+ * which instance was elected, a multi-answer one needs every placement.
+ *
+ * @param {Object} selection
+ * @param {Object} zone
+ * @returns {Promise<{ elected: (string|null), placed: string[] }>}
+ */
+async function resolveState(selection, zone) {
+  if (selection.strategy === 'roundRobin') {
+    const locations = await fluxApi.getApplicationLocation(selection.appName);
+    return { elected: null, placed: locations.map((entry) => entry.ip).filter(Boolean) };
+  }
+  const elected = await fluxApi.getAppMasterIpFromFdm(selection.appName, zone.fdm);
+  return { elected, placed: [] };
+}
+
+/**
+ * Process a single selected app - update DNS if needed.
+ * @param {Object} selection - what to publish for this app, from the selector
  * @returns {Promise<number>} Number of zones successfully updated
  */
-async function processApp(appName) {
-  // Process each configured zone
+async function processApp(selection) {
+  const { appName } = selection;
   let updatedCount = 0;
-  for (const zone of config.dns.zones) {
-    // Get the master IP from FDM using zone-specific FDM config
-    const masterIP = await fluxApi.getAppMasterIpFromFdm(appName, zone.fdm);
 
-    if (!masterIP) {
-      log.debug(`No master IP available from FDM for ${appName} in ${zone.name}, skipping`);
+  for (const zone of config.dns.zones) {
+    // eslint-disable-next-line no-await-in-loop
+    const state = await resolveState(selection, zone);
+    const plan = recordPlanner.planRecord(selection, state, zone);
+
+    // No plan means nothing is known to point at right now. Leave whatever is
+    // published in place: withdrawing hands the name to the zone wildcard, which
+    // answers with a proxy address the client cannot use and is cached far longer
+    // than the record would have been.
+    if (!plan) {
+      log.debug(`No address known for ${appName} in ${zone.name}, leaving DNS as-is`);
       continue;
     }
 
-    // Clean the master IP (remove any brackets for IPv6)
-    const cleanMasterIP = masterIP.replace(/\[|\]/g, '');
-
-    // Check if DNS update is needed for this zone
-    if (!hasIPsChanged(appName, [cleanMasterIP], zone.name)) {
+    if (!hasIPsChanged(appName, plan.contents, zone.name)) {
       log.debug(`No DNS change needed for ${appName} in ${zone.name}`);
       continue;
     }
 
-    log.info(`Updating DNS for ${appName} in ${zone.name}: ${cleanMasterIP}`);
+    log.info(`Updating DNS for ${appName} in ${zone.name}: ${plan.contents.join(', ')}`);
 
     try {
-      await dnsGateway.createGameDNSRecords(appName, [cleanMasterIP], zone.name, zone.ttl);
-      updateDNSState(appName, [cleanMasterIP], zone.name);
-      log.info(`DNS updated for ${appName}.${zone.name} -> ${cleanMasterIP}`);
+      // eslint-disable-next-line no-await-in-loop
+      await dnsGateway.createGameDNSRecords(appName, plan.contents, zone.name, plan.ttl);
+      updateDNSState(appName, plan.contents, zone.name);
+      log.info(`DNS updated for ${appName}.${zone.name} -> ${plan.contents.join(', ')}`);
       updatedCount += 1;
     } catch (error) {
       log.error(`Failed to update DNS for ${appName} in ${zone.name}: ${error.message}`);
@@ -182,21 +203,25 @@ async function runProcessingLoop() {
       return;
     }
 
-    // Resolve the G-mode game apps (decrypts enterprise specs only as needed)
-    const gameAppNames = await gModeResolver.resolveGameAppNames(
-      allAppSpecs,
-      config.games.gameTypes,
+    // Which apps we serve, and what shape their record takes. Owners declare a
+    // DNS route from v9 on; older apps are recognised the way they always were.
+    const { selections, skipped } = await appResolver.resolveAll(allAppSpecs, {
+      gameTypes: config.games.gameTypes,
+    });
+    const declared = selections.filter((s) => s.source === 'declared').length;
+    log.info(
+      `Serving ${selections.length} apps (${declared} declared, `
+      + `${selections.length - declared} legacy)${skipped ? `, ${skipped} unreadable` : ''}`,
     );
-    log.info(`Found ${gameAppNames.length} G-mode game apps`);
 
     // Track apps seen in this loop
-    const currentSeenApps = new Set(gameAppNames);
+    const currentSeenApps = new Set(selections.map((s) => s.appName));
 
-    // Process each app - get master IP from FDM and update DNS if needed
+    // Process each app - resolve where it is and update DNS if needed
     let zoneUpdatesCount = 0;
-    for (const appName of gameAppNames) {
+    for (const selection of selections) {
       // eslint-disable-next-line no-await-in-loop
-      const zonesUpdated = await processApp(appName);
+      const zonesUpdated = await processApp(selection);
       zoneUpdatesCount += zonesUpdated;
     }
 
@@ -204,7 +229,7 @@ async function runProcessingLoop() {
     await handleRemovedApps(currentSeenApps);
 
     const elapsedMs = Date.now() - startTime;
-    log.info(`Apps DNS loop completed: ${gameAppNames.length} apps, ${zoneUpdatesCount} zone updates, ${elapsedMs}ms`);
+    log.info(`Apps DNS loop completed: ${selections.length} apps, ${zoneUpdatesCount} zone updates, ${elapsedMs}ms`);
   } catch (error) {
     log.error(`Error in apps DNS processing loop: ${error.message}`);
   } finally {
@@ -215,7 +240,7 @@ async function runProcessingLoop() {
 /**
  * Start the apps DNS manager service
  */
-function start() {
+async function start() {
   log.info('Starting Apps DNS Manager service');
 
   // Initialize DNS Gateway client
@@ -225,10 +250,13 @@ function start() {
     log.info('Check dnsGatewayConfig.js configuration');
   }
 
-  // Initialize spec decryptor for enterprise apps (graceful - non-enterprise apps still work)
-  const decryptorReady = specDecryptor.initialize();
+  // Initialize spec decryptor for encrypted apps (graceful - cleartext apps still work).
+  // Registering the decrypt providers is async, so this is awaited before the first
+  // sweep: starting without it would read every sealed spec as unreadable and log a
+  // failure for each one.
+  const decryptorReady = await specDecryptor.initialize();
   if (!decryptorReady) {
-    log.warn('Spec decryptor not available - enterprise apps will be skipped');
+    log.warn('Spec decryptor not available - encrypted apps will be skipped');
   }
 
   // Run initial loop

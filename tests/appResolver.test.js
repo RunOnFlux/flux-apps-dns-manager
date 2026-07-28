@@ -47,19 +47,34 @@ describe('appResolver', () => {
   // not ours and one unreadable entry in it must not stop DNS being maintained
   // for every other app.
   it('skips a spec it cannot read without abandoning the sweep', async () => {
-    const { selections, skipped } = await resolveAll([
+    const { selections, unreadable } = await resolveAll([
       legacySpec({ name: 'minecraftone' }),
       { version: 7, name: 'broken' },
       legacySpec({ name: 'minecrafttwo' }),
     ], { gameTypes: GAME_TYPES });
 
-    expect(skipped).to.equal(1);
+    expect(unreadable).to.deep.equal(['broken']);
     expect(selections.map((s) => s.appName)).to.deep.equal(['minecraftone', 'minecrafttwo']);
   });
 
-  it('reports nothing to serve rather than failing on an empty list', async () => {
-    const { selections, skipped } = await resolveAll([], { gameTypes: GAME_TYPES });
+  // The distinction the caller acts on. An app we read and did not select is
+  // genuinely not ours and its records may eventually be removed; an app we could
+  // not read tells us nothing about whether it is still deployed. Collapsing the
+  // two would let a decrypt outage age out every sealed app and withdraw its name
+  // onto the zone wildcard.
+  it('names the apps it could not read, separately from the ones it does not serve', async () => {
+    const { selections, unreadable } = await resolveAll([
+      legacySpec({ name: 'odoo' }),
+      { version: 7, name: 'broken' },
+    ], { gameTypes: GAME_TYPES });
+
     expect(selections).to.deep.equal([]);
-    expect(skipped).to.equal(0);
+    expect(unreadable).to.deep.equal(['broken']);
+  });
+
+  it('reports nothing to serve rather than failing on an empty list', async () => {
+    const { selections, unreadable } = await resolveAll([], { gameTypes: GAME_TYPES });
+    expect(selections).to.deep.equal([]);
+    expect(unreadable).to.deep.equal([]);
   });
 });

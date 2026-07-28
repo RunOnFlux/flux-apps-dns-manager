@@ -205,17 +205,25 @@ async function runProcessingLoop() {
 
     // Which apps we serve, and what shape their record takes. Owners declare a
     // DNS route from v9 on; older apps are recognised the way they always were.
-    const { selections, skipped } = await appResolver.resolveAll(allAppSpecs, {
+    const { selections, unreadable } = await appResolver.resolveAll(allAppSpecs, {
       gameTypes: config.games.gameTypes,
     });
     const declared = selections.filter((s) => s.source === 'declared').length;
     log.info(
       `Serving ${selections.length} apps (${declared} declared, `
-      + `${selections.length - declared} legacy)${skipped ? `, ${skipped} unreadable` : ''}`,
+      + `${selections.length - declared} legacy)`
+      + `${unreadable.length ? `, ${unreadable.length} unreadable` : ''}`,
     );
 
-    // Track apps seen in this loop
-    const currentSeenApps = new Set(selections.map((s) => s.appName));
+    // What counts as still being here. An app we could not read is included
+    // deliberately: its records are only removed once the network stops carrying
+    // it, and a spec we failed to open says nothing about whether it is still
+    // deployed. Without this a decrypt outage would age out every sealed app and
+    // withdraw its name.
+    const currentSeenApps = new Set([
+      ...selections.map((s) => s.appName),
+      ...unreadable,
+    ]);
 
     // Process each app - resolve where it is and update DNS if needed
     let zoneUpdatesCount = 0;

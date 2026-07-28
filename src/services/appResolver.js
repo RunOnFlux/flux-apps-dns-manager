@@ -34,13 +34,19 @@ async function resolveOne(doc, { gameTypes }) {
 /**
  * Read every spec document, keeping the ones this service serves.
  *
+ * `unreadable` names the apps whose spec could not be read this sweep. They are
+ * reported separately from the ones we simply do not serve, because the two mean
+ * different things to the caller: an app we read and did not select is genuinely
+ * not ours, while an app we could not read tells us nothing at all. Treating the
+ * second as absent would let a decrypt outage age out every sealed app's records.
+ *
  * @param {Object[]} docs
  * @param {{ gameTypes: string[] }} opts
- * @returns {Promise<{ selections: Object[], skipped: number }>}
+ * @returns {Promise<{ selections: Object[], unreadable: string[] }>}
  */
 async function resolveAll(docs, { gameTypes }) {
   const selections = [];
-  let skipped = 0;
+  const unreadable = [];
 
   // Sequential on purpose. Opening a sealed spec is a call to the decrypt service,
   // and a whole sweep of them issued at once would arrive as a burst.
@@ -51,12 +57,12 @@ async function resolveAll(docs, { gameTypes }) {
       const selection = await resolveOne(doc, { gameTypes });
       if (selection) selections.push(selection);
     } catch (error) {
-      skipped += 1;
+      if (doc && doc.name) unreadable.push(doc.name);
       log.warn(`Could not read spec for ${doc && doc.name}: ${error.message}`);
     }
   }
 
-  return { selections, skipped };
+  return { selections, unreadable };
 }
 
 module.exports = { resolveOne, resolveAll };

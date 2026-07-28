@@ -21,9 +21,14 @@ async function resolveOne(doc, { gameTypes }) {
 
   // Sealed specs carry their components — and therefore any declared DNS route —
   // inside the ciphertext, so an undecrypted one cannot be classified at all.
-  // flux-spec dispatches to the version's registered provider.
-  if (typeof spec.decrypt === 'function') {
-    spec = await spec.decrypt();
+  //
+  // The provider is asked for and passed in rather than left implicit: registering
+  // one against the version's class makes it available to be built, not applied on
+  // its own. The opened result is handed to the resolver as-is, which accepts it
+  // directly and saves re-serializing a document only to parse it straight back.
+  if (typeof spec.createProvider === 'function') {
+    const provider = await spec.createProvider();
+    spec = await spec.decrypt(provider);
   }
 
   const deployment = await specLibs.resolveDeployment(spec);

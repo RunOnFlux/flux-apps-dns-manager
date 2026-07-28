@@ -1,0 +1,4 @@
+{
+  "rsaDecryptPath": "decryptMessageRSA",
+  "gcmDecryptPath": "v2/decrypt"
+}

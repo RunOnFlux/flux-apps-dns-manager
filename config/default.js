@@ -1,10 +1,14 @@
 const dnsGatewayConfig = require('./dnsGatewayConfig');
 const gamesConfig = require('./gamesConfig');
+const cryptoService = require('./cryptoService');
 
 module.exports = {
   server: {
     port: 16140,
   },
+  // Paths on the decrypt service, joined onto specDecryptor.baseUrl. The RSA path
+  // opens a v8 key wrap; the GCM path performs a whole v9 open backend-side.
+  cryptoService,
   // Flux API endpoints
   fluxApi: {
     baseUrl: 'https://api.runonflux.io',

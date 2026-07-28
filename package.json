@@ -19,6 +19,9 @@
   "author": "Flux Foundation",
   "license": "AGPL-3.0-or-later",
   "dependencies": {
+    "@runonflux/flux-spec": "file:../flux-spec/packages/spec",
+    "@runonflux/flux-spec-backend": "file:../flux-spec/packages/spec-backend",
+    "@runonflux/flux-spec-cjs": "file:../flux-spec/packages/flux-spec-cjs",
     "axios": "^1.10.0",
     "config": "^3.3.12",
     "cors": "^2.8.5",

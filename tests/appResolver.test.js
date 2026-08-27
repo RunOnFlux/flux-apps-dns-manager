@@ -1,6 +1,7 @@
 const { expect } = require('chai');
 const { resolveAll, resolveOne } = require('../src/services/appResolver');
 const specLibs = require('../src/services/specLibs');
+const { registerSpecDecryptProviders } = require('../src/services/specCrypto');
 
 const GAME_TYPES = ['minecraft'];
 
@@ -151,6 +152,96 @@ describe('appResolver', () => {
       await resolveOne(sealed.doc, { gameTypes: GAME_TYPES });
 
       expect(seen.resolved).to.equal(sealed.opened);
+    });
+  });
+
+  // The two tests above stand in for flux-spec on both sides — what they prove is
+  // this module's orchestration, and they would stay green if a real decrypted spec
+  // could not be resolved at all. So one case drives the real thing end to end: a
+  // genuinely sealed v9 document, opened through the registered provider, resolved by
+  // the real DeploymentSpec, and read by the real selector.
+  //
+  // A decrypted spec is an object and has no wire form — flux-spec refuses to
+  // serialize one — so this is also the assertion that the resolver never needs to
+  // turn it back into a document.
+  describe('a real sealed spec, end to end', () => {
+    const OWNER = '16dNCFf7nR3nx5iwn2RQMBw6KcJXkE3JC1';
+    let sealedDoc;
+
+    before(async () => {
+      const { FluxAppSpecV9, EncryptedSpecV9, CryptoProvider } = await specLibs.load();
+
+      const cleartext = FluxAppSpecV9.fromSubmission({
+        version: 9,
+        name: 'sealedgame',
+        description: 'x',
+        owner: OWNER,
+        ttl: 2592000,
+        contacts: { email: ['a@b.com'] },
+        instances: 1,
+        components: {
+          game: {
+            name: 'game',
+            description: 'x',
+            image: 'itzg/minecraft-server:latest',
+            cpu: 0.5,
+            memory: 300,
+            rootFsGb: 2,
+            persistentStorage: { sizeGb: 10, mounts: { '/data': { source: 'data', destination: '/data' } } },
+            ports: { game: { containerPort: 25565, hostPort: 31000 } },
+            // Values chosen to differ from the powerdns defaults (failover / 60), so
+            // the assertions below can only pass by reading the decrypted spec.
+            loadBalancing: { game: { provider: 'powerdns', strategy: 'roundRobin', ttl: 120 } },
+          },
+        },
+      });
+
+      // The stub keeps the plaintext the real decrypt service would hand back.
+      class StubEncrypt extends CryptoProvider {
+        async encrypt(plaintext) {
+          this.captured = plaintext;
+          return {
+            algorithm: 'AES-256-GCM', ciphertext: 'Y3Q=', nonce: 'bm9uY2U=', tag: 'dGFn',
+          };
+        }
+      }
+      const encryptStub = new StubEncrypt();
+      sealedDoc = (await EncryptedSpecV9.fromSpec(cleartext, encryptStub)).serialize();
+
+      // The real provider registration over a stub transport — the same call the
+      // decryptor makes, so what opens the spec here is what opens it in production.
+      await registerSpecDecryptProviders({
+        http: { post: async () => ({ status: 200, data: { status: 'ok', message: encryptStub.captured.toString('base64') } }) },
+        endpoints: { rsaDecrypt: 'decryptMessageRSA', gcmDecrypt: 'v2/decrypt' },
+        retries: { attempts: 1, delayMs: 0 },
+      });
+    });
+
+    it('is genuinely sealed before it is opened', async () => {
+      expect(await specLibs.isSealed(sealedDoc)).to.equal(true);
+    });
+
+    it('selects the app from the decrypted spec, reading the route the owner declared', async () => {
+      const selection = await resolveOne(sealedDoc, { gameTypes: GAME_TYPES });
+
+      expect(selection).to.not.equal(null);
+      expect(selection.appName).to.equal('sealedgame');
+      expect(selection.source).to.equal('declared');
+      expect(selection.strategy).to.equal('roundRobin');
+      expect(selection.ttl).to.equal(120);
+    });
+
+    it('resolves a deployment straight from the decrypted spec, with no document in between', async () => {
+      const { EncryptedSpecV9 } = await specLibs.load();
+      const spec = await specLibs.deserialize(sealedDoc);
+      expect(spec).to.be.instanceOf(EncryptedSpecV9);
+
+      const decrypted = await spec.decrypt(await spec.createProvider());
+      expect(decrypted.sealed, 'contents readable').to.equal(false);
+      expect(() => decrypted.spec.serialize(), 'and no wire form to fall back on').to.throw(/no wire form/);
+
+      const deployment = await specLibs.resolveDeployment(decrypted);
+      expect(deployment.routes('powerdns').map((r) => r.strategy)).to.deep.equal(['roundRobin']);
     });
   });
 });

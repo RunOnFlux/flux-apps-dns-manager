@@ -222,17 +222,21 @@ async function swapPlaceholderForAddresses(appName, serverIPs, zone, ttl) {
 }
 
 /**
- * Every record published for a name, whatever its type.
+ * Every rrset in a zone.
  *
- * The published record is the authority on whether a name is already answered - this
- * service's own memory of what it wrote is empty after a restart, and a placeholder
- * must never be published over a record that already exists.
+ * What is published is the authority on what this service has already done - its own
+ * memory is empty after a restart, and without consulting the zone it re-asserts every
+ * record it manages, each one a PATCH that bumps the zone serial and starts a transfer
+ * to the secondaries, all to write addresses that were already there.
  *
- * @param {string} appName - Application name
+ * Fetched once per sweep rather than once per name: the gateway answers a per-name
+ * query by reading the whole zone anyway, so asking per name is the same work
+ * multiplied by the number of apps.
+ *
  * @param {string} zone - DNS zone (required)
- * @returns {Promise<Array|null>} Records for the name, or null if it has none
+ * @returns {Promise<Array>} Every rrset in the zone
  */
-async function getRecordsForName(appName, zone) {
+async function getZoneRecords(zone) {
   if (!isReady()) {
     throw new Error('DNS Gateway client not initialized or disabled');
   }
@@ -241,16 +245,8 @@ async function getRecordsForName(appName, zone) {
     throw new Error('DNS zone is required');
   }
 
-  try {
-    const response = await dnsGatewayClient.get(`/api/v1/zones/${zone}/records/${appName}`);
-    return (response.data && response.data.records) || null;
-  } catch (error) {
-    if (error.response && error.response.status === 404) {
-      return null;
-    }
-    log.error(`Failed to read records for ${appName}.${zone}: ${error.message}`);
-    throw error;
-  }
+  const response = await dnsGatewayClient.get(`/api/v1/zones/${zone}`);
+  return (response.data && response.data.rrsets) || [];
 }
 
 /**
@@ -318,7 +314,7 @@ module.exports = {
   createGameDNSRecords,
   createPlaceholderRecord,
   swapPlaceholderForAddresses,
-  getRecordsForName,
+  getZoneRecords,
   deleteGameDNSRecords,
   getGameDNSRecords,
   cleanIPs,

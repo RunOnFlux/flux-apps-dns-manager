@@ -32,8 +32,9 @@ const OTHER_APP = gameSpec({ name: 'nginxthing', containerData: '/data' });
  */
 async function sweep({
   specs = [], elected = {}, answers = { [APP]: DIRECTOR }, published, cycles = 1, manager,
+  unreadableZones = false,
 }) {
-  const gateway = fakeGateway({ published });
+  const gateway = fakeGateway({ published, unreadableZones });
   const api = fakeFluxApi({ specs, elected });
   const zone = fakeZone({ answers });
   const restore = install({ gateway, api, zone });
@@ -92,11 +93,7 @@ describe('a name that already answers', () => {
   it('is never replaced by a placeholder', async () => {
     // The guard that matters most: this is a live app whose address FDM has simply
     // stopped reporting. Standing in for it would point players at a proxy.
-    const published = new Map([[`${APP}@${ZONE}`, [
-      {
-        name: `${APP}.${ZONE}`, type: 'A', content: [ELECTED], ttl: RECORD_TTL,
-      },
-    ]]]);
+    const published = new Map([[`${APP}@${ZONE}`, { type: 'A', contents: [ELECTED] }]]);
 
     const { gateway } = await sweep({ specs: [gameSpec({ name: APP })], published });
 
@@ -104,10 +101,79 @@ describe('a name that already answers', () => {
   });
 
   it('is checked against what is published, not against memory alone', async () => {
-    // Memory is empty after a restart, so the published record is what decides.
+    // Memory is empty after a restart, so the zone is what decides.
     const { gateway } = await sweep({ specs: [gameSpec({ name: APP })] });
 
-    expect(gateway.inZone(gateway.reads, ZONE)).to.have.lengthOf(1);
+    expect(gateway.reads.filter((read) => read.zone === ZONE)).to.have.lengthOf(1);
+  });
+});
+
+describe('a restart, with the zone already correct', () => {
+  // The defect this covers: the service keeps what it published in memory only, so on
+  // boot it knew nothing and re-asserted every address it manages. Each of those is a
+  // PATCH that changes no answer but bumps the zone serial and starts a transfer to
+  // three secondaries - hundreds of them, on every deploy.
+  it('writes nothing when every record already holds the right address', async () => {
+    const { gateway } = await sweep({
+      specs: [gameSpec({ name: APP })],
+      elected: { [APP]: ELECTED },
+      published: new Map([
+        [`${APP}@${ZONE}`, { type: 'A', contents: [ELECTED] }],
+        [`${APP}@${config.dns.zones[1].name}`, { type: 'A', contents: [ELECTED] }],
+      ]),
+    });
+
+    expect(gateway.writes).to.have.lengthOf(0);
+    expect(gateway.swaps).to.have.lengthOf(0);
+    expect(gateway.placeholders).to.have.lengthOf(0);
+  });
+
+  it('reads each zone once, not once per app', async () => {
+    const { gateway } = await sweep({
+      specs: [gameSpec({ name: APP }), gameSpec({ name: `${APP}two` })],
+      elected: { [APP]: ELECTED, [`${APP}two`]: ELECTED },
+    });
+
+    expect(gateway.reads.filter((read) => read.zone === ZONE)).to.have.lengthOf(1);
+  });
+
+  it('still writes when the address has actually moved', async () => {
+    const { gateway } = await sweep({
+      specs: [gameSpec({ name: APP })],
+      elected: { [APP]: MOVED_TO },
+      published: new Map([[`${APP}@${ZONE}`, { type: 'A', contents: [ELECTED] }]]),
+    });
+
+    const written = gateway.inZone(gateway.writes, ZONE);
+    expect(written).to.have.lengthOf(1);
+    expect(written[0].contents).to.deep.equal([MOVED_TO]);
+  });
+
+  it('finds the record of an app whose name carries capitals', async () => {
+    // PowerDNS stores names lower case. Comparing them as written by the spec had this
+    // service conclude a live app had no record at all - which is exactly the state in
+    // which it would stand in for one.
+    const mixed = 'MinecraftServerMixedCase';
+    const { gateway } = await sweep({
+      specs: [gameSpec({ name: mixed })],
+      answers: { [mixed]: DIRECTOR },
+      published: new Map([[`${mixed.toLowerCase()}@${ZONE}`, { type: 'A', contents: [ELECTED] }]]),
+    });
+
+    expect(gateway.inZone(gateway.placeholders, ZONE)).to.have.lengthOf(0);
+    expect(gateway.inZone(gateway.writes, ZONE)).to.have.lengthOf(0);
+  });
+
+  it('carries on when a zone cannot be read', async () => {
+    const { gateway } = await sweep({
+      specs: [gameSpec({ name: APP })],
+      elected: { [APP]: ELECTED },
+      unreadableZones: true,
+    });
+
+    // Nothing is known, so it publishes as it would have before - the failure costs a
+    // redundant write, never a wrong answer.
+    expect(gateway.writes.length + gateway.swaps.length).to.be.greaterThan(0);
   });
 });
 

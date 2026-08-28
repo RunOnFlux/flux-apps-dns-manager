@@ -21,6 +21,17 @@ const placeholder = require('./placeholder');
 // be compared against a list of addresses and every cycle would read as a change.
 const appsDNSState = new Map();
 
+// What the zones actually hold, refreshed once per sweep. Keyed by the name PowerDNS
+// stores, which is lower case - so an app whose spec name carries capitals still finds
+// its own record instead of concluding it has none.
+//
+// This exists because the service's memory of what it published does not survive a
+// restart. Without it, the first sweep after every deploy re-asserts every address it
+// manages - hundreds of PATCHes that change nothing, each bumping the zone serial and
+// starting a transfer to three secondaries.
+// Map<zoneName, Map<lowercaseName, { type, contents }>>
+const publishedIndex = new Map();
+
 // Track when each app was last seen (for deletion grace period)
 // Map<appName, timestamp> - only starts tracking when app disappears
 const appLastSeenTimestamps = new Map();
@@ -28,6 +39,35 @@ const appLastSeenTimestamps = new Map();
 // Polling state
 let isRunning = false;
 let pollingInterval = null;
+
+/**
+ * Read every zone into the published index. A zone that cannot be read keeps whatever
+ * index it had: a stale view is closer to the truth than no view, which would have the
+ * sweep re-assert every record it manages.
+ */
+async function refreshPublishedIndex() {
+  for (const zone of config.dns.zones) {
+    const suffix = `.${zone.name}.`;
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const rrsets = await dnsGateway.getZoneRecords(zone.name);
+      const index = new Map();
+      rrsets
+        .filter((rrset) => rrset.type === 'A' || rrset.type === 'CNAME')
+        .filter((rrset) => String(rrset.name).toLowerCase().endsWith(suffix))
+        .forEach((rrset) => {
+          const name = String(rrset.name).toLowerCase().slice(0, -suffix.length);
+          index.set(name, {
+            type: rrset.type,
+            contents: (rrset.records || []).map((record) => record.content),
+          });
+        });
+      publishedIndex.set(zone.name, index);
+    } catch (error) {
+      log.warn(`Could not read ${zone.name} to see what is already published: ${error.message}`);
+    }
+  }
+}
 
 /**
  * What this service last published for an app in a zone, if anything
@@ -46,14 +86,41 @@ function publishedRecord(appName, zone) {
  * @param {string} zone - DNS zone
  * @param {string} type - Record type published
  * @param {string[]} contents - Record contents published
+ * @param {number|null} at - When it was published, or null when adopted from the zone
  */
-function recordPublished(appName, zone, type, contents) {
+function recordPublished(appName, zone, type, contents, at = Date.now()) {
   let appState = appsDNSState.get(appName);
   if (!appState) {
     appState = new Map();
     appsDNSState.set(appName, appState);
   }
-  appState.set(zone, { type, contents: [...contents], at: Date.now() });
+  appState.set(zone, { type, contents: [...contents], at });
+}
+
+/**
+ * What the name currently answers with: what this service published during this run,
+ * and failing that what the zone itself holds.
+ *
+ * A record found in the zone is adopted into state, so the rest of a sweep treats it as
+ * known - which is the whole point, since it is what stops a restart rewriting records
+ * that are already correct.
+ *
+ * @param {string} appName - Application name
+ * @param {string} zone - DNS zone
+ * @returns {{type: string, contents: string[]}|undefined}
+ */
+function knownRecord(appName, zone) {
+  const remembered = publishedRecord(appName, zone);
+  if (remembered) return remembered;
+
+  const index = publishedIndex.get(zone);
+  const found = index ? index.get(String(appName).toLowerCase()) : undefined;
+  if (!found) return undefined;
+
+  // Adopted, not published by us: there is no moment to measure a placeholder's life
+  // from, so `at` stays unset and the duration is simply not reported.
+  recordPublished(appName, zone, found.type, found.contents, null);
+  return publishedRecord(appName, zone);
 }
 
 /**
@@ -70,7 +137,7 @@ function recordPublished(appName, zone, type, contents) {
  * @returns {boolean} True if they differ, or nothing has been published yet
  */
 function hasAddressChanged(appName, zone, addresses) {
-  const published = publishedRecord(appName, zone);
+  const published = knownRecord(appName, zone);
   if (!published) return true;
 
   // Compare contents (order-independent)
@@ -98,21 +165,12 @@ async function publishPlaceholder(appName, zone) {
   // A zone with no placeholder configured keeps its previous behaviour.
   if (!zone.placeholder) return false;
 
-  // Anything this service has published for the name during this run.
-  if (publishedRecord(appName, zone.name)) return false;
-
-  // ...and anything published before it started. Our own memory is empty after a
-  // restart, so what exists is read rather than assumed. This is the guard that stops
-  // a placeholder ever being written over a live app's address.
-  let existing;
-  try {
-    existing = await dnsGateway.getRecordsForName(appName, zone.name);
-  } catch (error) {
-    log.error(`Could not read what is published for ${appName} in ${zone.name}: ${error.message}`);
-    return false;
-  }
-
-  if (existing && existing.length) {
+  // Anything already published for the name - written during this run, or found in the
+  // zone. This is the guard that stops a placeholder ever replacing a live app's
+  // address, and it consults the zone rather than trusting memory, which is empty after
+  // a restart. Matching is case-insensitive, so an app whose name carries capitals is
+  // not mistaken for one that has no record at all.
+  if (knownRecord(appName, zone.name)) {
     log.debug(`${appName}.${zone.name} already has a record; not standing in for it`);
     return false;
   }
@@ -164,7 +222,7 @@ async function processZone(appName, zone) {
 
   log.info(`Updating DNS for ${appName} in ${zone.name}: ${cleanMasterIP}`);
 
-  const published = publishedRecord(appName, zone.name);
+  const published = knownRecord(appName, zone.name);
   try {
     if (published && published.type === 'A') {
       // Steady state: a master move replaces the address in place, as it always has.
@@ -177,10 +235,12 @@ async function processZone(appName, zone) {
       // nothing, which makes this the safe form for any first write.
       await dnsGateway.swapPlaceholderForAddresses(appName, [cleanMasterIP], zone.name, zone.ttl);
     }
-    if (published && published.type === 'CNAME') {
+    if (published && published.type === 'CNAME' && published.at) {
       // The whole point of the placeholder, as a number: how long this name answered
       // with the director before it could answer with a node. Against the ~15 minutes
       // it would previously have spent being answered by the wildcard at an hour's TTL.
+      // Only for a placeholder this run published; one adopted from the zone has no
+      // start to measure from.
       const stoodInFor = Math.round((Date.now() - published.at) / 1000);
       log.info(`${appName}.${zone.name} stood in for ${stoodInFor}s before an address was known`);
     }
@@ -309,6 +369,10 @@ async function runProcessingLoop() {
 
   try {
     log.info('Starting apps DNS processing loop');
+
+    // What the zones already hold, before deciding what needs writing. Without this the
+    // first sweep after a restart rewrites every record this service manages.
+    await refreshPublishedIndex();
 
     // Fetch all app specifications
     const allAppSpecs = await fluxApi.getAppSpecifications();

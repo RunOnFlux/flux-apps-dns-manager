@@ -134,11 +134,11 @@ async function getAllApplicationLocations() {
     if (response.data.status === 'success') {
       const locations = new Map();
       const data = response.data.data || [];
-      for (const app of data) {
+      data.forEach((app) => {
         if (app.name && app.locations) {
           locations.set(app.name, app.locations);
         }
-      }
+      });
       return locations;
     }
     log.warn(`Unexpected response from getAllApplicationLocations: ${response.data.status}`);

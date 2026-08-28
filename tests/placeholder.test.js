@@ -36,8 +36,9 @@ describe('a name the platform cannot place yet', () => {
 
   function setup({
     specs = [], elected = {}, locations = {}, answers = { [APP]: DIRECTOR }, published,
+    unreadableZones = false,
   } = {}) {
-    gateway = fakeGateway({ published });
+    gateway = fakeGateway({ published, unreadableZones });
     zone = fakeZone({ answers });
     restore = install({ gateway, api: fakeFluxApi({ specs, elected, locations }), zone });
     manager = freshManager();
@@ -91,11 +92,7 @@ describe('a name the platform cannot place yet', () => {
     // stopped reporting. Standing in for it would point players at a proxy.
     setup({
       specs: [legacySpec({ name: APP })],
-      published: new Map([[`${APP}@${ZONE}`, [
-        {
-          name: `${APP}.${ZONE}`, type: 'A', content: ['87.197.124.197'], ttl: RECORD_TTL,
-        },
-      ]]]),
+      published: new Map([[`${APP}@${ZONE}`, { type: 'A', contents: ['87.197.124.197'] }]]),
     });
 
     await manager.runProcessingLoop();
@@ -120,6 +117,83 @@ describe('a name the platform cannot place yet', () => {
     expect(manager.getDNSState()[APP][ZONE]).to.deep.equal({
       type: 'CNAME',
       contents: [DIRECTOR],
+    });
+  });
+
+  describe('a restart, with the zone already correct', () => {
+    // The service keeps what it published in memory only, so on boot it knew nothing
+    // and re-asserted every address it manages - PATCHes that change no answer but bump
+    // the zone serial and start a transfer to three secondaries, on every deploy.
+    it('writes nothing when every record already holds the right address', async () => {
+      setup({
+        specs: [legacySpec({ name: APP })],
+        elected: { [APP]: ELECTED },
+        published: new Map(config.dns.zones.map(
+          (z) => [`${APP}@${z.name}`, { type: 'A', contents: ['87.197.124.197'] }],
+        )),
+      });
+
+      await manager.runProcessingLoop();
+
+      expect(gateway.writes).to.have.lengthOf(0);
+      expect(gateway.placeholders).to.have.lengthOf(0);
+    });
+
+    it('reads each zone once, not once per app', async () => {
+      setup({
+        specs: [legacySpec({ name: APP }), legacySpec({ name: `${APP}two` })],
+        elected: { [APP]: ELECTED, [`${APP}two`]: ELECTED },
+      });
+
+      await manager.runProcessingLoop();
+
+      expect(gateway.reads.filter((read) => read.zone === ZONE)).to.have.lengthOf(1);
+    });
+
+    it('still writes when the address has actually moved', async () => {
+      setup({
+        specs: [legacySpec({ name: APP })],
+        elected: { [APP]: MOVED_TO },
+        published: new Map([[`${APP}@${ZONE}`, { type: 'A', contents: ['87.197.124.197'] }]]),
+      });
+
+      await manager.runProcessingLoop();
+
+      const written = gateway.inZone(gateway.writesFor(APP), ZONE);
+      expect(written).to.have.lengthOf(1);
+      expect(written[0].contents).to.deep.equal(['185.17.103.182']);
+    });
+
+    it('finds the record of an app whose name carries capitals', async () => {
+      // PowerDNS stores names lower case. Comparing them as the spec writes them had
+      // this service read "no record" for a live app - the state in which it stands in.
+      const mixed = `${GAME_PREFIX}MixedCase`;
+      setup({
+        specs: [legacySpec({ name: mixed })],
+        answers: { [mixed]: DIRECTOR },
+        published: new Map([[`${mixed.toLowerCase()}@${ZONE}`, { type: 'A', contents: ['1.2.3.4'] }]]),
+      });
+
+      await manager.runProcessingLoop();
+
+      // Only the one zone was seeded, so assert on that zone: the other legitimately
+      // has no record for this name and is stood in for.
+      expect(gateway.inZone(gateway.placeholdersFor(mixed), ZONE)).to.have.lengthOf(0);
+      expect(gateway.inZone(gateway.writesFor(mixed), ZONE)).to.have.lengthOf(0);
+    });
+
+    it('carries on when a zone cannot be read', async () => {
+      setup({
+        specs: [legacySpec({ name: APP })],
+        elected: { [APP]: ELECTED },
+        unreadableZones: true,
+      });
+
+      await manager.runProcessingLoop();
+
+      // Nothing is known, so it publishes as it would have before: the failure costs a
+      // redundant write, never a wrong answer.
+      expect(gateway.writesFor(APP).length).to.be.greaterThan(0);
     });
   });
 

@@ -13,8 +13,10 @@ const placeholder = require('../../src/services/placeholder');
 
 /**
  * A gateway that writes nowhere and remembers everything.
+ * `published` seeds what the zones already hold: Map of `appName@zone` to
+ * `{ type, contents }`, served back in the rrset shape the real gateway returns.
  */
-function fakeGateway({ published = new Map() } = {}) {
+function fakeGateway({ published = new Map(), unreadableZones = false } = {}) {
   // `writes` is every address publication, however it was sent - which is what most
   // tests mean by "what did it publish". The form matters in exactly one place, so the
   // two ways of sending one are also recorded apart: `plainWrites` replaced an existing
@@ -68,9 +70,20 @@ function fakeGateway({ published = new Map() } = {}) {
           appName, target, zone, ttl,
         });
       },
-      getRecordsForName: async (appName, zone) => {
-        reads.push({ appName, zone });
-        return published.get(`${appName}@${zone}`) || null;
+      getZoneRecords: async (zone) => {
+        reads.push({ zone });
+        if (unreadableZones) throw new Error('zone unavailable');
+        const rrsets = [];
+        published.forEach((record, key) => {
+          const [app, inZone] = key.split('@');
+          if (inZone !== zone) return;
+          rrsets.push({
+            name: `${app}.${zone}.`.toLowerCase(),
+            type: record.type,
+            records: record.contents.map((content) => ({ content })),
+          });
+        });
+        return rrsets;
       },
       deleteGameDNSRecords: async (appName, zone, recordType = 'A') => {
         deletes.push({ appName, zone, recordType });

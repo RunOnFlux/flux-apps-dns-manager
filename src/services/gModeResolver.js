@@ -23,9 +23,9 @@ function isEnterprise(spec) {
  */
 function pruneCache() {
   const now = Date.now();
-  for (const [hash, entry] of gModeCache) {
+  gModeCache.forEach((entry, hash) => {
     if (entry.expiresAt <= now) gModeCache.delete(hash);
-  }
+  });
 }
 
 /**

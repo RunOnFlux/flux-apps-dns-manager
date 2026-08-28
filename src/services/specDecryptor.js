@@ -68,7 +68,7 @@ function parseJson(data) {
 function hydrate(blob) {
   const parsed = {};
 
-  for (const [key, value] of Object.entries(blob)) {
+  Object.entries(blob).forEach(([key, value]) => {
     if (value instanceof Array) {
       parsed[key] = value.map((item) => (typeof item === 'object' && item !== null ? hydrate(item) : item));
     } else if (value && typeof value === 'string' && value.startsWith('[') && value.endsWith(']')) {
@@ -76,7 +76,7 @@ function hydrate(blob) {
     } else {
       parsed[key] = value;
     }
-  }
+  });
 
   return parsed;
 }
@@ -115,6 +115,40 @@ function decryptAesData(appName, nonceCiphertextTag, base64AesKey) {
  * @param {Object} spec - Encrypted enterprise app specification
  * @returns {Promise<Array|null>} Decrypted compose array, or null on failure
  */
+/**
+ * One attempt at fetching an app's AES key, reduced to the three outcomes the retry loop
+ * distinguishes: a key, a refusal that will not change, and "not available, ask again".
+ *
+ * Takes the client rather than reaching for the module's own, so the retry policy can be
+ * exercised without standing up mTLS.
+ *
+ * @param {Object} client - Decrypt service client
+ * @param {string} name - Application name, for logging
+ * @param {Object} payload - Decrypt request body
+ * @returns {Promise<{key: (string|null), retry: boolean}>}
+ */
+async function requestAesKey(client, name, payload) {
+  const response = await client.post('decryptMessageRSA', payload).catch((err) => {
+    log.warn(`Spec decrypt call failed for ${name}: ${err.message}`);
+    return null;
+  });
+
+  if (!response) return { key: null, retry: true };
+  if (response.status !== 200) return { key: null, retry: true };
+
+  const { status: payloadStatus, message: aesKey } = response.data;
+
+  // Made contact but request was rejected
+  if (payloadStatus !== 'ok') return { key: null, retry: false };
+
+  if (!aesKey) {
+    log.debug(`AES key not found for ${name}`);
+    return { key: null, retry: true };
+  }
+
+  return { key: aesKey, retry: false };
+}
+
 async function decryptCompose(spec) {
   const { enterprise, owner, name } = spec;
   if (!owner || !enterprise) return null;
@@ -138,33 +172,17 @@ async function decryptCompose(spec) {
 
   for (let attempt = 0; attempt < maxRetries; attempt += 1) {
     // eslint-disable-next-line no-await-in-loop
-    const response = await api.post('decryptMessageRSA', payload).catch((err) => {
-      log.warn(`Spec decrypt call failed for ${name}: ${err.message}`);
-      return null;
-    });
+    const outcome = await requestAesKey(api, name, payload);
 
-    if (!response) {
-      log.debug(`Decrypt key for ${name} failed, retrying in ${retryDelayMs / 1000}s`);
-      // eslint-disable-next-line no-await-in-loop
-      await sleep(retryDelayMs);
-      continue;
+    if (outcome.key) {
+      base64AesKey = outcome.key;
+      break;
     }
 
-    if (response.status !== 200) {
-      // eslint-disable-next-line no-await-in-loop
-      await sleep(retryDelayMs);
-      continue;
-    }
+    // Refused rather than unavailable - asking again will not change the answer.
+    if (!outcome.retry) return null;
 
-    const { status: payloadStatus, message: aesKey } = response.data;
-
-    // Made contact but request was rejected
-    if (payloadStatus !== 'ok') return null;
-
-    base64AesKey = aesKey;
-    if (base64AesKey) break;
-
-    log.debug(`AES key not found for ${name}, retrying in ${retryDelayMs / 1000}s`);
+    log.debug(`Decrypt key for ${name} unavailable, retrying in ${retryDelayMs / 1000}s`);
     // eslint-disable-next-line no-await-in-loop
     await sleep(retryDelayMs);
   }
@@ -186,4 +204,6 @@ module.exports = {
   initialize,
   isReady,
   decryptCompose,
+  // Exported so the retry policy has a test; not called from outside this module.
+  requestAesKey,
 };

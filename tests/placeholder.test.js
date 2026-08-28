@@ -93,7 +93,9 @@ describe('a name that already answers', () => {
     // The guard that matters most: this is a live app whose address FDM has simply
     // stopped reporting. Standing in for it would point players at a proxy.
     const published = new Map([[`${APP}@${ZONE}`, [
-      { name: `${APP}.${ZONE}`, type: 'A', content: [ELECTED], ttl: RECORD_TTL },
+      {
+        name: `${APP}.${ZONE}`, type: 'A', content: [ELECTED], ttl: RECORD_TTL,
+      },
     ]]]);
 
     const { gateway } = await sweep({ specs: [gameSpec({ name: APP })], published });

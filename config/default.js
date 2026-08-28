@@ -10,12 +10,25 @@ module.exports = {
     baseUrl: 'https://api.runonflux.io',
     timeout: 30000,
   },
-  // DNS configuration with zone-specific FDM settings
+  // DNS configuration with zone-specific FDM settings.
+  //
+  // `placeholder` is what a name is given before FDM has elected anything for it. The
+  // content is not configured - it is whatever the zone's own wildcard answers, asked
+  // of the servers authoritative for that zone - so nothing here has to track
+  // flux-pdns' first-character mapping. Only the TTL is ours: a minute, against the
+  // hour the wildcard's answer would otherwise be cached for. A zone with no
+  // `placeholder` block keeps today's behaviour and publishes nothing early.
   dns: {
     zones: [
       {
         name: 'app.runonflux.io',
         ttl: 300,
+        placeholder: {
+          ttl: 60,
+          resolvers: ['10.100.0.153'],
+          timeoutMs: 3000,
+          tries: 2,
+        },
         fdm: {
           baseUrlPattern: 'http://fdm-fn-1-{index}.runonflux.io:16130',
           serverCount: 4,
@@ -25,6 +38,12 @@ module.exports = {
       {
         name: 'app2.runonflux.io',
         ttl: 300,
+        placeholder: {
+          ttl: 60,
+          resolvers: ['10.100.0.154'],
+          timeoutMs: 3000,
+          tries: 2,
+        },
         fdm: {
           baseUrlPattern: 'http://fdm-fn-2-{index}.runonflux.io:16130',
           serverCount: 2,

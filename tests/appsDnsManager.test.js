@@ -1,7 +1,7 @@
 const { expect } = require('chai');
 const config = require('config');
 const {
-  fakeGateway, fakeFluxApi, install, freshManager, atTime,
+  fakeGateway, fakeFluxApi, install, freshManager, atTime, legacySpec, v9Spec,
 } = require('./helpers/fakes');
 
 const ZONES = config.dns.zones.map((z) => z.name);
@@ -9,66 +9,6 @@ const GRACE_MS = config.games.deletionGracePeriodMs;
 const GAME_PREFIX = config.games.gameTypes[0];
 
 const T0 = 1_800_000_000_000;
-
-function legacySpec({ name = `${GAME_PREFIX}app`, containerData = 'g:/data' } = {}) {
-  return {
-    version: 7,
-    name,
-    description: 'x',
-    owner: '19z6SjrVrWqBTLiCXWLRjcu9ydnzWNz3UD',
-    compose: [{
-      name: 'app',
-      description: 'app',
-      repotag: 'nginx:latest',
-      ports: [31000],
-      domains: [''],
-      environmentParameters: [],
-      commands: [],
-      containerPorts: [80],
-      containerData,
-      cpu: 0.1,
-      ram: 100,
-      hdd: 1,
-      repoauth: '',
-    }],
-    instances: 3,
-    contacts: [],
-    geolocation: [],
-    expire: 88000,
-    nodes: [],
-    staticip: false,
-  };
-}
-
-function v9Spec({ name = 'declaredapp', strategy = 'roundRobin', ttl } = {}) {
-  const dns = { provider: 'powerdns', strategy };
-  if (ttl !== undefined) dns.ttl = ttl;
-  return {
-    version: 9,
-    name,
-    description: 'x',
-    owner: '16dNCFf7nR3nx5iwn2RQMBw6KcJXkE3JC1',
-    ttl: 2592000,
-    instances: 3,
-    contacts: { email: ['a@b.com'] },
-    components: {
-      web: {
-        name: 'web',
-        image: 'nginx:latest',
-        cpu: 0.5,
-        memory: 300,
-        rootFsGb: 2,
-        persistentStorage: {
-          sizeGb: 5,
-          mounts: { '/data': { source: 'data', destination: '/data' } },
-          sync: null,
-        },
-        ports: { http: { containerPort: 80, hostPort: 31000 } },
-        loadBalancing: { http: dns },
-      },
-    },
-  };
-}
 
 describe('appsDnsManager sweep', () => {
   let gateway;
@@ -307,7 +247,12 @@ describe('appsDnsManager sweep', () => {
       await manager.runProcessingLoop();
 
       expect(manager.getStatus().managedApps).to.deep.equal([`${GAME_PREFIX}one`]);
-      expect(manager.getDNSState()[`${GAME_PREFIX}one`][ZONES[0]]).to.deep.equal(['1.2.3.4']);
+      // Reported with its type: a name standing in for an address holds a director's
+      // name rather than a list of addresses, and a bare array cannot tell them apart.
+      expect(manager.getDNSState()[`${GAME_PREFIX}one`][ZONES[0]]).to.deep.equal({
+        type: 'A',
+        contents: ['1.2.3.4'],
+      });
     });
   });
 });

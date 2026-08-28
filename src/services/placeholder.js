@@ -72,15 +72,18 @@ async function wildcardAnswerFor(appName, zone) {
   try {
     const targets = await resolverFor(zone).resolveCname(fqdn);
     if (!targets || !targets.length) {
-      log.debug(`No wildcard answer for ${fqdn}, nothing to stand in for it`);
+      log.warn(`No wildcard answer for ${fqdn}, nothing to stand in for it`);
       return null;
     }
     return canonical(targets[0]);
   } catch (error) {
     // Publishing nothing leaves today's behaviour exactly as it is, which is the right
     // way to fail: the placeholder is an improvement on the wildcard, not a repair the
-    // name depends on.
-    log.debug(`Could not ask ${zone.name} what it answers for ${fqdn}: ${error.code || error.message}`);
+    // name depends on. Warned rather than debugged because the service runs without
+    // DEBUG, and this is the one line that distinguishes "the fix did nothing because
+    // it had nothing to do" from "the fix could not run" - which otherwise look
+    // identical from outside.
+    log.warn(`Could not ask ${zone.name} what it answers for ${fqdn}, not standing in: ${error.code || error.message}`);
     return null;
   }
 }

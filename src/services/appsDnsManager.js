@@ -53,7 +53,7 @@ function recordPublished(appName, zone, type, contents) {
     appState = new Map();
     appsDNSState.set(appName, appState);
   }
-  appState.set(zone, { type, contents: [...contents] });
+  appState.set(zone, { type, contents: [...contents], at: Date.now() });
 }
 
 /**
@@ -176,6 +176,13 @@ async function processZone(appName, zone) {
       // transaction that removes it - and removing a CNAME that is not there costs
       // nothing, which makes this the safe form for any first write.
       await dnsGateway.swapPlaceholderForAddresses(appName, [cleanMasterIP], zone.name, zone.ttl);
+    }
+    if (published && published.type === 'CNAME') {
+      // The whole point of the placeholder, as a number: how long this name answered
+      // with the director before it could answer with a node. Against the ~15 minutes
+      // it would previously have spent being answered by the wildcard at an hour's TTL.
+      const stoodInFor = Math.round((Date.now() - published.at) / 1000);
+      log.info(`${appName}.${zone.name} stood in for ${stoodInFor}s before an address was known`);
     }
     recordPublished(appName, zone.name, 'A', [cleanMasterIP]);
     log.info(`DNS updated for ${appName}.${zone.name} -> ${cleanMasterIP}`);

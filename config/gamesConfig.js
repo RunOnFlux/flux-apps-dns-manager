@@ -54,6 +54,7 @@ const gameTypes = [
   'vrising',
   'windrose',
   'fivem',
+  'dragonwilds',
 ];
 
 module.exports = {

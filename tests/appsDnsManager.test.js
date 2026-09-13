@@ -1,7 +1,7 @@
 const { expect } = require('chai');
 const config = require('config');
 const {
-  fakeGateway, fakeFluxApi, install, freshManager, atTime, legacySpec, v9Spec,
+  fakeGateway, fakeFluxApi, fakeZone, install, freshManager, atTime, legacySpec, v9Spec,
 } = require('./helpers/fakes');
 
 const ZONES = config.dns.zones.map((z) => z.name);
@@ -16,10 +16,15 @@ describe('appsDnsManager sweep', () => {
   let restore;
   let manager;
 
-  function setup({ specs = [], elected = {}, locations = {} } = {}) {
+  // The zone is faked here as it is in the placeholder suite. An unplaced app
+  // makes the sweep ask the zone what its wildcard answers, and against the real
+  // resolver that is a live query to a public nameserver: it answered ETIMEOUT
+  // after 17 seconds, past mocha's limit, so the suite reported a failure that
+  // was the network's and masked anything that broke underneath it.
+  function setup({ specs = [], elected = {}, locations = {}, answers = {} } = {}) {
     gateway = fakeGateway();
     api = fakeFluxApi({ specs, elected, locations });
-    restore = install({ gateway, api });
+    restore = install({ gateway, api, zone: fakeZone({ answers }) });
     manager = freshManager();
   }
 

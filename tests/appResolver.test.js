@@ -238,7 +238,10 @@ describe('appResolver', () => {
 
       const decrypted = await spec.decrypt(await spec.createProvider());
       expect(decrypted.sealed, 'contents readable').to.equal(false);
-      expect(() => decrypted.spec.serialize(), 'and no wire form to fall back on').to.throw(/no wire form/);
+      // No wire form to fall back on, and no instance to get one from: the
+      // wrapper withholds both serializing names and hands out nothing underneath.
+      expect(decrypted.spec, 'no route to the inner spec').to.equal(undefined);
+      expect(decrypted.serialize, 'and no wire form to fall back on').to.equal(undefined);
 
       const deployment = await specLibs.resolveDeployment(decrypted);
       expect(deployment.routes('powerdns').map((r) => r.strategy)).to.deep.equal(['roundRobin']);

@@ -18,7 +18,7 @@
  * - terraria, terrariaflux
  *
  * Other supported games:
- * - ark (Ark: Survival Evolved)
+ * - arksurvivalascended (ARK: Survival Ascended)
  * - Valheim
  * - palworld
  * - enshrouded
@@ -32,14 +32,13 @@ const gameTypes = [
   'palworld',
   'enshrouded',
   'rustserver', // More specific than 'rust' to avoid matching rustdesk/rustpad
-  'ark',
   'valheim',
   'terraria',
   'satisfactory',
   'sevendays',
   'teamspeak',
   '7daystodie',
-  'arksurvivalascended',
+  'arksurvivalascended', // The marketplace app's full name; a bare 'ark' would also match any other app starting with ark (e.g. arkor)
   'barotrauma',
   'conanexiles',
   'corekeeper',
@@ -55,6 +54,7 @@ const gameTypes = [
   'windrose',
   'fivem',
   'dragonwilds',
+  'hytale',
 ];
 
 module.exports = {

@@ -31,22 +31,18 @@ jobs:
       - name: Install Ansible
         run: pip install ansible
 
+      # The runner is persistent: the key lives in RUNNER_TEMP, which is
+      # emptied after every job, and nothing is written to ~/.ssh.
       - name: Setup SSH key
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         run: |
-          mkdir -p ~/.ssh
-          echo "$SSH_PRIVATE_KEY" > flux-cert-1.key
-          chmod 600 flux-cert-1.key
-
-          cat >> ~/.ssh/config << EOF
-          Host 10.100.0.172
-              IdentityFile $(pwd)/flux-cert-1.key
-              IdentitiesOnly yes
-              StrictHostKeyChecking no
-          EOF
+          install -m 600 /dev/null "$RUNNER_TEMP/flux-cert-1.key"
+          echo "$SSH_PRIVATE_KEY" > "$RUNNER_TEMP/flux-cert-1.key"
 
       - name: Run Deployment
         run: |
           cd ansible
-          ansible-playbook -i inventory.yaml deploy.yaml
+          ansible-playbook -i inventory.yaml deploy.yaml \
+            --private-key "$RUNNER_TEMP/flux-cert-1.key" \
+            --ssh-common-args "-o IdentitiesOnly=yes -o StrictHostKeyChecking=no"

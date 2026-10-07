@@ -25,6 +25,7 @@
  * - satisfactory
  * - conan (Conan Exiles)
  * - sevendays (7 Days to Die)
+ * - armareforger (Arma Reforger)
  */
 
 const gameTypes = [
@@ -55,6 +56,7 @@ const gameTypes = [
   'fivem',
   'dragonwilds',
   'hytale',
+  'armareforger',
 ];
 
 module.exports = {

@@ -26,6 +26,7 @@
  * - conan (Conan Exiles)
  * - sevendays (7 Days to Die)
  * - armareforger (Arma Reforger)
+ * - factorio (Factorio)
  */
 
 const gameTypes = [
@@ -57,6 +58,7 @@ const gameTypes = [
   'dragonwilds',
   'hytale',
   'armareforger',
+  'factorio',
 ];
 
 module.exports = {

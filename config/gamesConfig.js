@@ -27,6 +27,11 @@
  * - sevendays (7 Days to Die)
  * - armareforger (Arma Reforger)
  * - factorio (Factorio)
+ * - tmodloader (tModLoader, modded Terraria)
+ * - theisle (The Isle: Evrima)
+ * - eurotrucksimulator2 / americantrucksimulator (SCS convoy servers)
+ * - teamfortress2 (Team Fortress 2)
+ * - arksurvivalevolved (ARK: Survival Evolved)
  */
 
 const gameTypes = [
@@ -59,6 +64,12 @@ const gameTypes = [
   'hytale',
   'armareforger',
   'factorio',
+  'tmodloader',
+  'theisle',
+  'eurotrucksimulator2',
+  'americantrucksimulator',
+  'teamfortress2',
+  'arksurvivalevolved', // Full name, like ASA: never a bare 'ark'
 ];
 
 module.exports = {

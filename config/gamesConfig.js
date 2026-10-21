@@ -70,6 +70,9 @@ const gameTypes = [
   'americantrucksimulator',
   'teamfortress2',
   'arksurvivalevolved', // Full name, like ASA: never a bare 'ark'
+  'vintagestory',
+  'soulmask',
+  'beammp',
 ];
 
 module.exports = {

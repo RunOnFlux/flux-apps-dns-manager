@@ -32,6 +32,7 @@
  * - eurotrucksimulator2 / americantrucksimulator (SCS convoy servers)
  * - teamfortress2 (Team Fortress 2)
  * - arksurvivalevolved (ARK: Survival Evolved)
+ * - abioticfactor (Abiotic Factor)
  */
 
 const gameTypes = [
@@ -73,6 +74,7 @@ const gameTypes = [
   'vintagestory',
   'soulmask',
   'beammp',
+  'abioticfactor', // The marketplace app's full name (AbioticFactor): G-mode, so its domain needs this prefix
 ];
 
 module.exports = {

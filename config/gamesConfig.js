@@ -33,6 +33,10 @@
  * - teamfortress2 (Team Fortress 2)
  * - arksurvivalevolved (ARK: Survival Evolved)
  * - abioticfactor (Abiotic Factor)
+ * - scum (SCUM)
+ * - theforest (The Forest)
+ * - icarus (Icarus)
+ * - killingfloor2 (Killing Floor 2)
  */
 
 const gameTypes = [
@@ -75,6 +79,10 @@ const gameTypes = [
   'soulmask',
   'beammp',
   'abioticfactor', // The marketplace app's full name (AbioticFactor): G-mode, so its domain needs this prefix
+  'scum', // The marketplace app's name (Scum): G-mode, so its domain needs this prefix. Checked 2026-10-29: no other deployed app starts with it
+  'theforest', // The marketplace app's name (TheForest): G-mode, so its domain needs this prefix. 'sonsoftheforest' above does not cover it (startsWith)
+  'icarus', // The marketplace app's name (Icarus): G-mode, so its domain needs this prefix. Checked 2026-10-29: no marketplace app and no deployed app (2281 global specs) starts with it
+  'killingfloor2', // The marketplace app's name (KillingFloor2): G-mode, so its domain needs this prefix. The prefix is the APP NAME ('kf2' would not match: startsWith). Checked 2026-10-29: no app named like it on the marketplace (prod and dev)
 ];
 
 module.exports = {

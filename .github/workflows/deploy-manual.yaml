@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   deploy:
-    runs-on: runonflux
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -31,8 +31,8 @@ jobs:
       - name: Install Ansible
         run: pip install ansible
 
-      # The runner is persistent: the key lives in RUNNER_TEMP, which is
-      # emptied after every job, and nothing is written to ~/.ssh.
+      # GitHub-hosted runner (the self-hosted runonflux one stopped taking jobs on
+      # 2026-10-28): the key lives in RUNNER_TEMP and nothing is written to ~/.ssh.
       - name: Setup SSH key
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
